@@ -15,7 +15,7 @@ Choose the ownership and delivery model before choosing a credential or endpoint
 | Data for another user through an enabled app | Import API and OAuth | `references/integration-oauth-webhooks.md` |
 | Receive memory, transcript, audio, or summary events | Webhooks | `references/integration-oauth-webhooks.md` |
 | Assistant-native contextual access | Omi MCP | `references/mcp-and-cli.md` |
-| Headless or CI JSON automation | `omi-cli` | `references/mcp-and-cli.md` |
+| Headless or CI JSON automation | `omi-cli` plus REST semantics | `references/mcp-and-cli.md` and `references/developer-rest-api.md` |
 
 ## Required workflow
 
