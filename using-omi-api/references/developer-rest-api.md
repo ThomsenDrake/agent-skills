@@ -2,32 +2,41 @@
 
 ## Contents
 
-- [Authentication and limits](#authentication-and-limits)
+- [Authentication and key lifecycle](#authentication-and-key-lifecycle)
+- [Limits and list semantics](#limits-and-list-semantics)
 - [Resources](#resources)
 - [Side effects and errors](#side-effects-and-errors)
 
-## Authentication and limits
+## Authentication and key lifecycle
 
-The personal Developer API base is `https://api.omi.me/v1/dev`. The narrative API overview documents personal data access with a Developer key supplied as `Authorization: Bearer ...`. Keep the key in an environment variable. Scope keys to the least privilege needed: `conversations`, `memories`, `action_items`, or `goals`, with `read` or `write` access. A key's full value is revealed only at creation. Never expose it in output.
+The [Developer overview](https://docs.omi.me/doc/developer/api/overview) documents the personal data base as `https://api.omi.me/v1/dev/user`. Authenticate these user-resource routes with a Developer key prefixed `omi_dev_...` as `Authorization: Bearer <key>`. Do not use an MCP `omi_mcp_...` key, Integration `sk_...` key, or Firebase token. Scope the key to the least privilege needed from `conversations:read`, `conversations:write`, `memories:read`, `memories:write`, `action_items:read`, `action_items:write`, `goals:read`, and `goals:write`.
 
-The documented rate limit is 100 requests/minute/API key and 10,000/day/user. Observe `X-RateLimit-*` headers. Use bounded offset pages, preserve IDs, and deduplicate because no snapshot guarantee is published.
+Key lifecycle is a separate signed-in surface. `GET/POST /v1/dev/keys` and `DELETE /v1/dev/keys/{key_id}` require the user's current Omi/Firebase session; an existing `omi_dev_...` key cannot list, create, or revoke keys. Listing returns metadata and a prefix, not full secrets. Creation requires `name`, accepts optional scopes, and returns the full new key once.
 
-For date-based summaries, define “yesterday” with the user's intended timezone and fixed start/end timestamps. Conversation list results are not a substitute for an undocumented completion guarantee: report the returned records and use only fields needed for the summary. `structured.overview` is the preferred compact representation when present; do not fetch transcripts by default.
+Create a key through automation only when the response can stream directly into an approved secret store while stdout, stderr, traces, and telemetry are redacted. Retain only non-secret metadata for reconciliation. If the tool path would expose the one-time response, stop and have the user create the key in the trusted Omi Developer UI. Never print, echo, or return the `key` field.
+
+## Limits and list semantics
+
+The overview documents ceilings of 100 requests/minute/API key and 10,000/day/user. [CLI troubleshooting](https://docs.omi.me/doc/developer/cli/troubleshooting) also identifies `dev:conversations` at 25/hour, `dev:memories` at 120/hour, and `dev:memories_batch` at 15/hour. Treat these as cumulative policy limits, honor `X-RateLimit-*` and `Retry-After`, and do not assume the list is exhaustive. Coordinate one request budget per user, credential, and policy across parallel jobs; never evade a user limit by rotating keys.
+
+Use bounded offset pages, preserve IDs, and deduplicate because no snapshot guarantee is published. `GET /v1/dev/user/conversations` returns only completed, non-discarded conversations by contract. Current implementation can exclude additional records such as locked content, but that is not a stable public selection guarantee. Absence from the list does not prove that a processing, failed, discarded, locked, or otherwise excluded conversation does not exist. A completed conversation can still have asynchronous memories or action items pending.
+
+For date summaries, define the user's timezone and fixed start/end timestamps. Prefer `structured.overview` when present and do not request transcripts by default.
 
 ## Resources
 
 | Resource | Methods and paths | Important rules |
 |---|---|---|
-| Keys | `GET/POST /keys`, `DELETE /keys/{key_id}` | Create with `name` and optional scopes. Full key is shown once. Key-management auth wording is inconsistent; see the discrepancy guide. |
-| Memories | `GET/POST /user/memories`, `POST /user/memories/batch`, `PATCH/DELETE /user/memories/{memory_id}` | List with `limit`, `offset`, `categories`; content is 1–500 characters; batch max 25; public visibility shares data. |
-| Vector search | `GET /user/memories/vector/search` | Query is required; `limit` is 1–100. |
-| Action items | `GET/POST /user/action-items`, `POST /user/action-items/batch`, `PATCH/DELETE /user/action-items/{action_item_id}` | Filter by conversation, completion, and dates; batch max 50; `due_at` may notify the user. |
-| Conversations | `GET/POST /user/conversations`, `POST /user/conversations/from-segments`, `GET/PATCH/DELETE /user/conversations/{conversation_id}` | List filters include dates, categories, folder, starred, transcript, limit, and offset. Text is 1–100000 characters; segments are 1–500. `client_session_id` is the documented retry key for segment ingestion. |
-| Folders | `GET /user/folders` | List first to resolve valid folder IDs. |
-| Goals | `GET/POST /user/goals`, `GET/PATCH/DELETE /user/goals/{goal_id}`, `GET /user/goals/{goal_id}/history`, `PATCH /user/goals/{goal_id}/progress` | History accepts days 1–365; progress uses query `current_value`; list can include inactive goals. |
+| Keys | `GET/POST /v1/dev/keys`, `DELETE /v1/dev/keys/{key_id}` | Signed-in Omi/Firebase session, not `omi_dev`; full created key is shown once. |
+| Memories | `GET/POST /v1/dev/user/memories`, `POST /v1/dev/user/memories/batch`, `PATCH/DELETE /v1/dev/user/memories/{memory_id}` | List by `limit`, `offset`, `categories`; content is 1-500 characters; batch max 25; public visibility shares data. |
+| Vector search | `GET /v1/dev/user/memories/vector/search` | `query` is required; `limit` is 1-100. Besides `memories:read`, this fails closed without the persisted default-read grant and server rollout enablement. |
+| Action items | `GET/POST /v1/dev/user/action-items`, `POST /v1/dev/user/action-items/batch`, `PATCH/DELETE /v1/dev/user/action-items/{action_item_id}` | Filter by conversation, completion, and dates; batch max 50; `due_at` may notify the user. |
+| Conversations | `GET/POST /v1/dev/user/conversations`, `POST /v1/dev/user/conversations/from-segments`, `GET/PATCH/DELETE /v1/dev/user/conversations/{conversation_id}` | List filters include dates, categories, `folder_id`, `starred`, `include_transcript`, `limit`, and `offset`. Text is 1-100000 characters; segments are 1-500. Only segment ingestion documents stable `client_session_id` replay to the same conversation ID. |
+| Folders | `GET /v1/dev/user/folders` | Requires `conversations:read`; list first to resolve valid folder IDs. |
+| Goals | `GET/POST /v1/dev/user/goals`, `GET/PATCH/DELETE /v1/dev/user/goals/{goal_id}`, `GET /v1/dev/user/goals/{goal_id}/history`, `PATCH /v1/dev/user/goals/{goal_id}/progress` | History accepts `days` 1-365; progress uses query `current_value`; list can include inactive goals. |
 
-Conversation creation starts asynchronous extraction and may invoke enabled apps or webhooks. Prefer `structured.overview` before requesting a full transcript. Treat deletes and public visibility as consequential writes.
+Conversation creation starts asynchronous extraction and can invoke enabled apps or webhooks. Treat deletes, public visibility, due-date notifications, and key lifecycle as consequential writes.
 
 ## Side effects and errors
 
-Common documented classes are 400, 401, 403, 404, 422, 429, and 500. A memory-read `403` with `developer_memory_access_not_ready` indicates account readiness, not a reason to regenerate keys. A conversation may be completed but still have asynchronous derived memories or action items.
+Common documented classes are 400, 401, 403, 404, 422, 429, and 500. A memory-read `403` with `developer_memory_access_not_ready` indicates account readiness, not a reason to regenerate keys. Reconcile uncertain writes by a documented stable identifier or read path before retrying; conversation-list absence alone is insufficient.
