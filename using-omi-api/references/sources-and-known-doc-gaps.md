@@ -1,6 +1,6 @@
 # Sources and Known Documentation Gaps
 
-Snapshot date: 2026-08-06. Recheck official sources before acting on a changed or contradictory detail.
+Snapshot date: 2026-08-07. Recheck official sources before acting on a changed or contradictory detail.
 
 ## Sources
 
@@ -13,11 +13,14 @@ Snapshot date: 2026-08-06. Recheck official sources before acting on a changed o
 - [OAuth](https://docs.omi.me/doc/developer/apps/Oauth)
 - [Integration apps and webhooks](https://docs.omi.me/doc/developer/apps/Integrations)
 - [MCP introduction](https://docs.omi.me/doc/developer/mcp/introduction)
+- [MCP setup](https://docs.omi.me/doc/developer/mcp/setup)
 - [MCP tools](https://docs.omi.me/doc/developer/mcp/tools)
+- [CLI quickstart](https://docs.omi.me/doc/developer/cli/quickstart)
 - [CLI for agents](https://docs.omi.me/doc/developer/cli/agents)
+- [CLI troubleshooting](https://docs.omi.me/doc/developer/cli/troubleshooting)
 
 ## Known gaps
 
 The narrative Developer overview describes personal REST authentication with a Developer key, while generated endpoint pages can say `firebase_id_token`; key-management authentication wording is also inconsistent. Webhook signing, delivery retries, ordering, idempotency, and exactly-once guarantees are not documented. Offset pagination has no published snapshot guarantee. No formal REST deprecation policy or legal data ownership/retention SLA was found in the reviewed sources.
 
-Treat these as documentation gaps, not permissions to guess. Verify the current official source or stop and explain the uncertainty.
+Treat these as documentation gaps, not permissions to guess. Prefer the narrative Developer overview for the documented public `omi_dev_...` REST flow, but report a persistent authentication conflict instead of substituting Firebase credentials. If official sources cannot be accessed, treat the affected guarantee as unknown, avoid writes that depend on it, and tell the user that live verification was unavailable.
