@@ -18,6 +18,8 @@ GET  /v2/integrations/{app_id}/conversations?uid={user_id}
 GET  /v2/integrations/{app_id}/memories?uid={user_id}
 ```
 
+Use the Omi API host with these `/v2` paths and the app credential in the configured authorization header. Consult the current Import API reference for the exact body schema and response fields; do not infer fields from the personal REST API. Keep an application-side import ledger keyed by your own stable email/thread identifier because generic Import API idempotency is not documented. Stop new imports when the user disables or revokes the app, and design consent, retention, participant-data, and attachment-minimization rules before rollout.
+
 The app key must belong to the matching `app_id`, and the user must explicitly enable the app. Validate the user identity and requested scope before importing sensitive data.
 
 ## OAuth
@@ -35,4 +37,4 @@ Omi app Developer Settings configure these channels: Memory Creation, Real-Time 
 
 ## Receiver design
 
-Use HTTPS, return a fast 2xx response, parse only fields required for the task, protect stored payloads, and record a deduplication key. Do not use public request-inspection services for sensitive payloads. The docs do not promise request signatures, retries, ordering, or exactly-once delivery. When an event is missing, reconcile through the corresponding authenticated data surface instead of inventing delivery semantics.
+Use HTTPS, enforce a bounded body and timeout, durably enqueue or persist the minimum needed data before returning a fast 2xx response, and record a deduplication key. Omi does not document a stable webhook event ID or signing method, so use a documented resource ID when present and otherwise treat a payload hash as only a fallback. Do not use public request-inspection services for sensitive payloads. The docs do not promise request signatures, retries, ordering, or exactly-once delivery. When an event is missing, reconcile through the corresponding authenticated data surface instead of inventing delivery semantics.
