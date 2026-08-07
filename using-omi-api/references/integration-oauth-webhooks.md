@@ -9,7 +9,13 @@
 
 ## Import API
 
-An enabled third-party app acts for a user with an app key. Do not substitute a personal Developer key. The documented paths are:
+An enabled third-party app acts for a user through `https://api.omi.me` with an app key prefixed `sk_...`:
+
+```http
+Authorization: Bearer sk_your_api_key_here
+```
+
+The key must belong to the `app_id` in the path. The user must explicitly enable the app, and the app must have External Integration, Imports, and the capability required for the operation. Do not substitute an `omi_dev_...` key, `omi_mcp_...` key, Firebase token, or callback `uid`. The documented paths are:
 
 ```text
 POST /v2/integrations/{app_id}/user/conversations?uid={user_id}
@@ -18,23 +24,38 @@ GET  /v2/integrations/{app_id}/conversations?uid={user_id}
 GET  /v2/integrations/{app_id}/memories?uid={user_id}
 ```
 
-Use the Omi API host with these `/v2` paths and the app credential in the configured authorization header. Consult the current Import API reference for the exact body schema and response fields; do not infer fields from the personal REST API. Keep an application-side import ledger keyed by your own stable email/thread identifier because generic Import API idempotency is not documented. Stop new imports when the user disables or revokes the app, and design consent, retention, participant-data, and attachment-minimization rules before rollout.
+Operation details:
 
-The app key must belong to the matching `app_id`, and the user must explicitly enable the app. Validate the user identity and requested scope before importing sensitive data.
+| Operation | Documented request and response |
+|---|---|
+| Create conversation | `text` is required. Optional fields are `started_at`, `finished_at`, `text_source`, `text_source_spec`, `language`, and `geolocation`. Success is `200 {}` and creation is asynchronous. |
+| Create memories | Supply either `text` for extraction or `memories[]` with required `content` and optional `tags`; `text_source` and `text_source_spec` are optional. Success is `200 {}` and saving/extraction is asynchronous. |
+| Read conversations | Paginate with `limit` (default 100, max 1000) and `offset`; optionally use `include_discarded` and comma-separated `statuses`. The response wraps records in `conversations`. |
+| Read memories | Paginate with `limit` (default 100, max 1000) and `offset`. The response wraps records in `memories`. |
+
+Do not infer Import fields from personal REST. Keep an application-side import ledger keyed by a stable source identifier because generic Import API idempotency is not documented. An empty success body does not prove that asynchronous creation has completed; reconcile through the read endpoint or Omi app before retrying. A `403` can mean an invalid key, a user-disabled app, or a missing capability. Stop new imports when access is disabled or revoked, and define consent, retention, participant-data, and attachment-minimization rules before rollout. See the [official Import API](https://docs.omi.me/doc/developer/apps/Import).
+
+Validate the user identity, returned `uid`, and requested capability before importing sensitive data.
 
 ## OAuth
 
-Use `https://api.omi.me/v1/oauth/authorize?app_id=...&state=...`. The app must be registered and have an HTTPS home URL. Generate high-entropy, single-use `state`, bind it to the initiating session, and reject callbacks whose state does not match. Treat callback `uid` as an identifier to validate and authorize, not as proof by itself.
+Omi documents an OAuth 2.0-like enablement flow at `https://api.omi.me/v1/oauth/authorize?app_id=...&state=...`. The app must be registered and have an HTTPS home URL. Generate high-entropy, single-use `state`, bind it to the initiating session, and reject callbacks whose state does not match.
+
+Omi handles the Firebase token exchange internally. The app callback receives only `uid` and `state`; it does not receive an OAuth access token or refresh token. Completing the flow attempts to enable the app. Subsequent Import API calls still use the app's `sk_...` key plus the validated `uid`. Store `uid` as sensitive data and never treat it as authentication proof by itself. See the [official OAuth guide](https://docs.omi.me/doc/developer/apps/Oauth).
 
 ## Webhook channels
 
 Omi app Developer Settings configure these channels: Memory Creation, Real-Time Transcript, Audio Bytes, and Day Summary. The reference does not document a REST endpoint for registering them.
 
 - Memory Creation can carry full conversation data. It fires when a memory is created, not as a formally guaranteed “conversation complete” event.
-- Real-Time Transcript carries segments with `session_id` and `uid`.
+- Real-Time Transcript carries segments with `session_id` and `uid`; the docs tell receivers to handle duplicate segments.
 - Audio Bytes are PCM16 binary POST bodies with a configured sample-rate query value.
-- Day Summary uses newer `summary_json`; legacy `summary` may be a Python-dict-like string, not JSON. In-app summary generation is not documented to trigger delivery.
+- Day Summary is scheduled at most once per day when its delivery conditions are met; absence is not necessarily failure. It uses newer `summary_json`; legacy `summary` may be a Python-dict-like string, not JSON. The in-app “Generate Summary” action does not currently POST to the developer webhook.
 
 ## Receiver design
 
-Use HTTPS, enforce a bounded body and timeout, durably enqueue or persist the minimum needed data before returning a fast 2xx response, and record a deduplication key. Omi does not document a stable webhook event ID or signing method, so use a documented resource ID when present and otherwise treat a payload hash as only a fallback. Do not use public request-inspection services for sensitive payloads. The docs do not promise request signatures, retries, ordering, or exactly-once delivery. When an event is missing, reconcile through the corresponding authenticated data surface instead of inventing delivery semantics.
+The current Omi webhook documentation specifies no signature, authorization header, mTLS requirement, or source-IP allowlist. Treat webhook requests as unauthenticated at the Omi protocol layer. Never authenticate or authorize a caller solely from `uid`, `session_id`, a body ID, or a payload hash.
+
+Use an independently controlled ingress capability supported by the deployment, such as a receiver secret embedded in the configured URL or an equivalent gateway control. Treat this as receiver-side mitigation, not Omi signing. Prevent the secret from entering access logs and rotate it if exposed.
+
+Use HTTPS, enforce a bounded body and timeout, and durably enqueue or persist the minimum needed data before returning a fast 2xx response. Use a documented resource ID for deduplication when present; otherwise use a payload hash only as a replay heuristic, never authentication. Do not send sensitive payloads to public request-inspection services. The docs do not promise retries, ordering, or exactly-once delivery. When an event is missing, reconcile through the corresponding authenticated data surface instead of inventing delivery semantics. See the [official Integration Apps guide](https://docs.omi.me/doc/developer/apps/Integrations).
