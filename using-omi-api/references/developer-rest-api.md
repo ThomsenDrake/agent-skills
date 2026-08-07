@@ -12,6 +12,8 @@ The personal Developer API base is `https://api.omi.me/v1/dev`. The narrative AP
 
 The documented rate limit is 100 requests/minute/API key and 10,000/day/user. Observe `X-RateLimit-*` headers. Use bounded offset pages, preserve IDs, and deduplicate because no snapshot guarantee is published.
 
+For date-based summaries, define “yesterday” with the user's intended timezone and fixed start/end timestamps. Conversation list results are not a substitute for an undocumented completion guarantee: report the returned records and use only fields needed for the summary. `structured.overview` is the preferred compact representation when present; do not fetch transcripts by default.
+
 ## Resources
 
 | Resource | Methods and paths | Important rules |
@@ -29,4 +31,3 @@ Conversation creation starts asynchronous extraction and may invoke enabled apps
 ## Side effects and errors
 
 Common documented classes are 400, 401, 403, 404, 422, 429, and 500. A memory-read `403` with `developer_memory_access_not_ready` indicates account readiness, not a reason to regenerate keys. A conversation may be completed but still have asynchronous derived memories or action items.
-
