@@ -13,7 +13,7 @@ An MCP key is not a personal REST credential. Do not send it to `/v1/dev` endpoi
 
 ## CLI
 
-For headless automation, set `OMI_API_KEY` through the execution environment and use `omi --json`. Keep stdout machine-readable JSON and treat stderr as structured error output. Exit codes are 0 success, 1 usage, 2 authentication, 3 server/connection, 4 rate limited, and 5 not found.
+For headless automation, set `OMI_API_KEY` through the execution environment and use `omi --json`. Keep stdout machine-readable JSON and treat stderr as structured error output. Use the Developer REST conversation reference for date boundaries, completion semantics, pagination, and transcript minimization. Define “yesterday” in an explicit timezone. Exit codes are 0 success, 1 usage, 2 authentication, 3 server/connection, 4 rate limited, and 5 not found.
 
 ```sh
 omi --json memory list --limit 25 | jq '.[] | {id, content, category}'
