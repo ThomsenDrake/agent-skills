@@ -1,4 +1,0 @@
-interface:
-  display_name: "Using Omi API"
-  short_description: "Use Omi APIs safely and correctly"
-  default_prompt: "Use $using-omi-api to help me access or integrate with Omi."
