@@ -8,13 +8,13 @@ Each skill is self-contained and follows the [Agent Skills open standard](https:
 
 | Skill | Description |
 | --- | --- |
-| [`using-omi-api`](./using-omi-api/) | Comprehensive guidance for using Omi across Developer REST, Integration and OAuth, webhooks, MCP, and `omi-cli`, including authentication boundaries, safety, reliability, and known documentation gaps. |
+| [`using-omi-api`](./skills/using-omi-api/) | Comprehensive guidance for using Omi across Developer REST, Integration and OAuth, webhooks, MCP, and `omi-cli`, including authentication boundaries, safety, reliability, and known documentation gaps. |
 
 Omi is the first skill in this collection. Additional skills will be added as they are developed and reviewed.
 
 ## Using a skill
 
-1. Select the skill directory you need.
+1. Select the skill directory you need from `skills/`.
 2. Review its `SKILL.md`, compatibility requirements, and referenced resources.
 3. Install or copy the complete directory using the skill-loading mechanism supported by your agent.
 4. Supply credentials through an approved secret store or runtime injection, never by embedding them in the skill.
@@ -24,11 +24,12 @@ Installation paths and commands vary by agent. This repository intentionally doe
 ## Repository structure
 
 ```text
-<skill-name>/
-├── SKILL.md       # Required metadata and instructions
-├── references/    # Optional supporting documentation
-├── scripts/       # Optional executable helpers
-└── assets/        # Optional templates and static resources
+skills/
+└── <skill-name>/
+    ├── SKILL.md       # Required metadata and instructions
+    ├── references/    # Optional supporting documentation
+    ├── scripts/       # Optional executable helpers
+    └── assets/        # Optional templates and static resources
 ```
 
 ## Standards
