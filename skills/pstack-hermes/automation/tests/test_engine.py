@@ -280,6 +280,45 @@ class LifecycleTests(unittest.TestCase):
                         "even failed workers must stop their credentialed gateway gracefully")
         self.assertEqual(set(self.docker.tasks), {"writer"})
 
+    def test_mocked_worker_failure_reports_bounded_stage_and_exit_without_raw_output(self):
+        self.boundaries()
+        self.docker.worker_exit = 13
+        with self.assertRaisesRegex(ValueError, r"writer\.worker\.preflight\.exit13 \(ValueError\)") as failure:
+            self.mod.adapt(self.repo, self.wrapper, self.out)
+        self.assertNotIn("RAW_PROVIDER", str(failure.exception))
+        self.assertEqual(self.docker.resources, {})
+
+    def test_mocked_untrusted_worker_stage_is_never_reflected(self):
+        self.boundaries()
+        self.docker.status_mutation = lambda status: status | {"stage": "RAW_PRIVATE_SOURCE"}
+        with self.assertRaisesRegex(ValueError, r"writer\.worker \(ValueError\)") as failure:
+            self.mod.adapt(self.repo, self.wrapper, self.out)
+        self.assertNotIn("RAW_PRIVATE_SOURCE", str(failure.exception))
+
+    def test_mocked_receipt_failure_identifies_only_the_receipt_gate(self):
+        self.boundaries()
+        self.docker.receipt_mutation = lambda report: report | {"errors": {"RAW_PRIVATE_ERROR": 1}}
+        with self.assertRaisesRegex(ValueError, r"writer\.receipt \(ValueError\)") as failure:
+            self.mod.adapt(self.repo, self.wrapper, self.out)
+        self.assertNotIn("RAW_PRIVATE_ERROR", str(failure.exception))
+
+    def test_mocked_reviewer_output_failure_identifies_only_the_output_gate(self):
+        self.boundaries()
+        def remove_report(role, mounts):
+            if role == "reviewer":
+                (mounts["/out"] / "audit.json").unlink()
+        self.docker.after_worker = remove_report
+        with self.assertRaisesRegex(ValueError, r"reviewer\.outputs \(ValueError\)"):
+            self.mod.adapt(self.repo, self.wrapper, self.out)
+
+    def test_mocked_audit_failure_identifies_gate_without_reflecting_findings(self):
+        self.boundaries()
+        self.docker.report_mutation = lambda report: report | {
+            "passed": False, "security_concerns": ["RAW_PRIVATE_FINDING"]}
+        with self.assertRaisesRegex(ValueError, r"reviewer\.audit \(ValueError\)") as failure:
+            self.mod.adapt(self.repo, self.wrapper, self.out)
+        self.assertNotIn("RAW_PRIVATE_FINDING", str(failure.exception))
+
     def test_mocked_worker_status_cannot_substitute_booleans_for_schema_and_exit_integers(self):
         self.boundaries()
         self.docker.status_mutation = lambda status: status | {"schema": True, "exit_code": False}

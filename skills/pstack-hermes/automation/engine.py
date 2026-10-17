@@ -164,7 +164,7 @@ def _task(role, plan, envelope, destination):
                                           + "\n\nController task JSON:\n" + json.dumps(task, sort_keys=True), encoding="utf-8")
 
 
-def _phase(role, snapshots, policy, receipts, report=None):
+def _phase(role, snapshots, policy, receipts, report=None, *, progress=lambda detail: None):
     owned, uid, gid = _Owned(), os.getuid(), os.getgid()
     internal, egress = owned.reserve("network"), owned.reserve("network")
     state, gateway, keeper, worker, helper = (owned.reserve(kind) for kind in
@@ -172,6 +172,7 @@ def _phase(role, snapshots, policy, receipts, report=None):
     hardening = ["--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                  "--memory", "512m", "--cpus", "1", "--pids-limit", "64", "--user", f"{uid}:{gid}"]
     try:
+        progress("resources")
         for name, extra in ((internal, ["--internal"]), (egress, [])):
             _docker(["network", "create", "--label", owned.label, "--driver", "bridge", *extra, name])
         _docker(["volume", "create", "--label", owned.label, "--driver", "local", "--opt", "type=tmpfs",
@@ -185,6 +186,7 @@ def _phase(role, snapshots, policy, receipts, report=None):
                  "--max-total-request-bytes", "1500000", "--max-response-bytes", "16777216",
                  "--deadline-seconds", "1200"], secret=True)
         _docker(["network", "connect", egress, gateway])
+        progress("gateway")
         _docker(["start", gateway])
         for attempt in range(10):
             if _docker(["exec", gateway, "python", "-I", "-c", HEALTH], timeout=3, check=False).returncode == 0:
@@ -202,15 +204,26 @@ def _phase(role, snapshots, policy, receipts, report=None):
         # Prevent image UID 1000 directory metadata from repopulating host-UID tmpfs.
         command = [arg + ",volume-nocopy" if arg.startswith("type=volume,") and "volume-nocopy" not in arg
                    else arg for arg in command]
+        progress("worker")
         try:
-            status = _json(_docker(command[1:], timeout=1100).stdout)
-            _require(type(status.get("schema")) is int and type(status.get("exit_code")) is int
+            completed = _docker(command[1:], timeout=1100, check=False)
+            status = _json(completed.stdout)
+            if (set(status) == {"schema", "role", "ok", "exit_code", "stage"}
+                    and type(status["schema"]) is int and status["schema"] == 1
+                    and status["role"] == role and type(status["ok"]) is bool
+                    and type(status["exit_code"]) is int and 0 <= status["exit_code"] <= 255
+                    and status["stage"] in ("startup", "preflight", "vibe", "export", "finished", "timeout")):
+                progress(f"worker.{status['stage']}.exit{status['exit_code']}")
+            _require(completed.returncode == 0
+                     and type(status.get("schema")) is int and type(status.get("exit_code")) is int
                      and status.get("ok") is True
                      and status == {"schema": 1, "role": role, "ok": True, "exit_code": 0, "stage": "finished"},
                      "worker did not finish successfully")
         finally:
             _docker(["stop", "--time", "30", gateway], timeout=45)
+        progress("receipt")
         receipt = validate_receipt(control.read_json(receipts / (role + ".json"), maximum=8192))
+        progress("export")
         result = _docker(["run", "--rm", "--name", helper, "--label", owned.label, "--network", "none",
                           *hardening, "--mount", f"type=volume,src={state},dst=/state,readonly",
                           "--entrypoint", "python", IMAGE, "-I", "-c", EXPORT_HELPER], timeout=60)
@@ -226,6 +239,9 @@ def adapt(repo: Path, wrapper: dict, out: Path) -> dict:
     Docker and provider failures emit only a trusted stage and exception class.
     """
     stage = "preflight"
+    def phase_progress(detail):
+        nonlocal stage
+        stage = stage.split(".", 1)[0] + "." + detail
     try:
         repo, out = Path(repo).resolve(), Path(out).absolute()
         _require(os.environ.get("MISTRAL_API_KEY", "").strip() and os.environ.get("PSTACK_VIBE_MODEL") == MODEL,
@@ -247,7 +263,8 @@ def adapt(repo: Path, wrapper: dict, out: Path) -> dict:
             protocol.materialize(repo, plan, snapshots)
             _task("writer", plan, {}, root / "writer-policy")
             stage = "writer"
-            writer_receipt, writer_run = _phase("writer", snapshots, root / "writer-policy", receipts)
+            writer_receipt, writer_run = _phase("writer", snapshots, root / "writer-policy", receipts,
+                                                progress=phase_progress)
             stage = "candidate"
             envelope = protocol.collect(repo, plan, snapshots / "candidate")
             for update in envelope["updates"]:
@@ -255,9 +272,13 @@ def adapt(repo: Path, wrapper: dict, out: Path) -> dict:
                 control.validate_text_update(update["path"], before.decode("utf-8"), update["content"])
             _task("reviewer", plan, envelope, root / "reviewer-policy")
             stage = "reviewer"
-            reviewer_receipt, reviewer_run = _phase("reviewer", snapshots, root / "reviewer-policy", receipts, report)
+            reviewer_receipt, reviewer_run = _phase("reviewer", snapshots, root / "reviewer-policy", receipts, report,
+                                                    progress=phase_progress)
+            stage = "reviewer.candidate"
             _require(protocol.collect(repo, plan, snapshots / "candidate") == envelope, "candidate changed during review")
+            stage = "reviewer.outputs"
             _require({path.name for path in report.iterdir()} == {"audit.json"}, "unexpected reviewer output")
+            stage = "reviewer.audit"
             audit = control.validate_audit(control.read_json(report / "audit.json", maximum=128 * 1024), plan, envelope)
             payload = {"schema": 1, "plan": wrapper, "candidate": envelope, "audit": audit,
                        "receipts": {"writer": writer_receipt, "reviewer": reviewer_receipt},
