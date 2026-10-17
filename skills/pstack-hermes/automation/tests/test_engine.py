@@ -315,9 +315,18 @@ class LifecycleTests(unittest.TestCase):
         self.boundaries()
         self.docker.report_mutation = lambda report: report | {
             "passed": False, "security_concerns": ["RAW_PRIVATE_FINDING"]}
-        with self.assertRaisesRegex(ValueError, r"reviewer\.audit \(ValueError\)") as failure:
+        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)") as failure:
             self.mod.adapt(self.repo, self.wrapper, self.out)
         self.assertNotIn("RAW_PRIVATE_FINDING", str(failure.exception))
+
+    def test_mocked_blocking_audit_reports_only_closed_rejection_code(self):
+        self.boundaries()
+        self.docker.report_mutation = lambda report: report | {
+            "security_concerns": ["RAW_PRIVATE_FINDING"]}
+        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.blockers \(AuditError\)") as failure:
+            self.mod.adapt(self.repo, self.wrapper, self.out)
+        self.assertNotIn("RAW_PRIVATE_FINDING", str(failure.exception))
+        self.assertFalse(self.out.exists())
 
     def test_mocked_worker_status_cannot_substitute_booleans_for_schema_and_exit_integers(self):
         self.boundaries()

@@ -108,25 +108,47 @@ def worker_command(*, name: str, network: str, policy: Path, snapshots: Path,
     return args
 
 
+AUDIT_REJECTION_CODES = frozenset({
+    "schema", "verdict", "lists", "blockers", "summary", "source-list",
+    "source-coverage", "disposition", "mapped-edit", "equivalence",
+})
+
+
+class AuditError(ValueError):
+    """A bounded controller-defined rejection, never reviewer-supplied text."""
+
+    def __init__(self, code: str):
+        if type(code) is not str or code not in AUDIT_REJECTION_CODES:
+            raise ValueError("invalid audit rejection code")
+        self._code = code
+        super().__init__(code)
+
+    @property
+    def code(self) -> str:
+        return self._code
+
+
 def validate_audit(report: dict, plan: dict, envelope: dict) -> dict:
     required = {"passed", "security_concerns", "logic_errors", "suggestions", "summary", "source_dispositions"}
-    if not isinstance(report, dict) or set(report) != required or report["passed"] is not True:
-        raise ValueError("review verdict must be a passing strict report")
+    if not isinstance(report, dict) or set(report) != required:
+        raise AuditError("schema")
+    if report["passed"] is not True:
+        raise AuditError("verdict")
     for key in ("security_concerns", "logic_errors", "suggestions"):
         value = report[key]
         if not isinstance(value, list) or len(value) > 64 or any(not isinstance(x, str) or len(x) > 4000 for x in value):
-            raise ValueError("review lists must contain bounded text")
+            raise AuditError("lists")
     if report["security_concerns"] or report["logic_errors"]:
-        raise ValueError("review contains blocking findings")
+        raise AuditError("blockers")
     if not isinstance(report["summary"], str) or not 12 <= len(report["summary"]) <= 4000:
-        raise ValueError("review summary must cite concrete inspected evidence")
+        raise AuditError("summary")
     dispositions = report["source_dispositions"]
     if not isinstance(dispositions, list):
-        raise ValueError("review source dispositions must be a list")
+        raise AuditError("source-list")
     seen = [entry["source_path"] for entry in dispositions
             if isinstance(entry, dict) and isinstance(entry.get("source_path"), str)]
     if sorted(seen) != sorted(plan["changed_paths"]):
-        raise ValueError("review must account for every source change exactly once")
+        raise AuditError("source-coverage")
     edited = {item["path"] for item in envelope["updates"]}
     agent_paths = {"agents/poteto-agent.md": "bots/poteto-agent/SOUL.md",
                    "agents/comment-sicko.md": "bots/comment-sicko/SOUL.md"}
@@ -134,12 +156,12 @@ def validate_audit(report: dict, plan: dict, envelope: dict) -> dict:
         if (not isinstance(entry, dict) or set(entry) != {"source_path", "status", "reason"}
                 or entry["status"] not in ("updated", "already-present")
                 or not isinstance(entry["reason"], str) or not 12 <= len(entry["reason"]) <= 4000):
-            raise ValueError("review source disposition must state a concrete supported decision")
+            raise AuditError("disposition")
         target = agent_paths.get(entry["source_path"], entry["source_path"])
         if entry["status"] == "updated" and target not in edited:
-            raise ValueError("updated source disposition has no mapped edit")
+            raise AuditError("mapped-edit")
         if entry["status"] == "already-present" and target in edited:
-            raise ValueError("already-present source disposition contradicts a mapped edit")
+            raise AuditError("equivalence")
     return report
 
 

@@ -278,8 +278,14 @@ def adapt(repo: Path, wrapper: dict, out: Path) -> dict:
             _require(protocol.collect(repo, plan, snapshots / "candidate") == envelope, "candidate changed during review")
             stage = "reviewer.outputs"
             _require({path.name for path in report.iterdir()} == {"audit.json"}, "unexpected reviewer output")
+            stage = "reviewer.audit.json"
+            report_data = control.read_json(report / "audit.json", maximum=128 * 1024)
             stage = "reviewer.audit"
-            audit = control.validate_audit(control.read_json(report / "audit.json", maximum=128 * 1024), plan, envelope)
+            try:
+                audit = control.validate_audit(report_data, plan, envelope)
+            except control.AuditError as exc:
+                stage = "reviewer.audit." + exc.code
+                raise
             payload = {"schema": 1, "plan": wrapper, "candidate": envelope, "audit": audit,
                        "receipts": {"writer": writer_receipt, "reviewer": reviewer_receipt},
                        "runs": {"writer": writer_run, "reviewer": reviewer_run}}
