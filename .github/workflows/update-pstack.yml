@@ -1,0 +1,22 @@
+name: Update pstack from cursor/plugins
+
+on:
+  schedule:
+    # daily 14:00 UTC = 9am ET (EST) / 10am ET (EDT); GitHub cron is UTC-only
+    - cron: '0 14 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-pstack
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync pstack from upstream
+        run: bash scripts/update-pstack.sh
