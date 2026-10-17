@@ -11,7 +11,8 @@ license: MIT
 
 The package contains 54 workflow and principle skills, this index, and two bot profile skeletons.
 It adapts Lauren Tan's pstack v0.15.25 for Hermes Agent and Hermes bot profiles.
-The vendored `skills/pstack/` tree remains unchanged. Its daily sync does not update this adaptation.
+The daily sync owns the vendored `skills/pstack/` tree. A separate repository workflow proposes Hermes updates through reviewed PRs.
+The updater does not update installed profiles or merge PRs. See the [repository maintenance guide](https://github.com/ThomsenDrake/agent-skills#automatic-pstack-hermes-updates).
 
 ## What changed
 
@@ -34,14 +35,15 @@ Do not install both pstack variants into the same profile. Their leaf names over
 Use an existing profile only when the user names it. Use a new test profile for experiments.
 Keep secrets in `.env` or the credential store, never in this package.
 
-### Current branch
+### Copy a reviewed checkout
 
-Copy the complete adapted tree from the `pstack-hermes` branch.
+Copy the complete adapted tree from the default branch or an explicitly reviewed revision.
+For an unmerged change, check out its exact reviewed commit before copying.
 Resolve the target with `hermes profile show <profile>`. Its `Path` is `<profile-home>`.
 Replace every placeholder and quote the real paths before running these `terminal` calls.
 
 ```python
-terminal(command="git clone --branch pstack-hermes --single-branch https://github.com/ThomsenDrake/agent-skills.git '<checkout>'")
+terminal(command="git clone https://github.com/ThomsenDrake/agent-skills.git '<checkout>'")
 terminal(command="hermes profile show <profile>")
 terminal(command="cp -R '<checkout>/skills/pstack-hermes' '<profile-home>/skills/pstack-hermes'")
 terminal(command="hermes -p <profile> skills list")
@@ -51,10 +53,10 @@ The destination must not already exist. Do not merge a new copy over a live inst
 Copy all 54 child directories, not just this `SKILL.md`.
 Hermes recursively discovers the nested leaf skills. Start a new session after installation.
 
-### After merge to the default branch
+### Install from the default branch
 
 The repository identifier follows Hermes's default-branch installer format.
-It is not a branch selector. Until this branch is merged, use the copy method above.
+It is not a branch selector. Use a reviewed checkout for an unmerged revision.
 
 ```python
 terminal(command="hermes -p <profile> skills install ThomsenDrake/agent-skills/skills/pstack-hermes --yes")
