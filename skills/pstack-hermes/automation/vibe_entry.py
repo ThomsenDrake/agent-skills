@@ -55,7 +55,7 @@ def validate_config(config: Any) -> dict[str, str]:
         models = config["models"]
         _require(type(models) is dict, "effective models must be alias-keyed")
         model = models[MODEL]
-        for field, expected in (("alias", MODEL), ("name", MODEL), ("provider", "mistral")):
+        for field, expected in (("alias", MODEL), ("name", MODEL), ("provider", "mistral"), ("thinking", "low")):
             _require(model[field] == expected, "model route changed")
         # Vibe appends defaults; only models with the exact allowed API name
         # are available. More than one matching alias is not this policy.
@@ -71,7 +71,7 @@ def validate_config(config: Any) -> dict[str, str]:
         for name in ("compaction_model", "vision_model"):
             secondary = config[name]
             _require(all(secondary[field] == expected for field, expected in
-                         (("alias", MODEL), ("name", MODEL), ("provider", "mistral"))),
+                         (("alias", MODEL), ("name", MODEL), ("provider", "mistral"), ("thinking", "low"))),
                      "secondary model route changed")
         _require(config["utility_models"] == {"title": "active", "smart_approve": "active"},
                  "utility model route changed")

@@ -138,6 +138,10 @@ class ExportTests(unittest.TestCase):
             (("config", "models", MODEL, "alias"), "mistral-large-latest"),
             (("config", "models", MODEL, "name"), "mistral-large-latest"),
             (("config", "models", MODEL, "provider"), "generic"),
+            (("config", "models", MODEL, "thinking"), "off"),
+            (("config", "models", MODEL, "thinking"), "high"),
+            (("config", "compaction_model", "thinking"), "off"),
+            (("config", "vision_model", "thinking"), "off"),
             (("config", "providers", 0, "backend"), "generic"),
             (("config", "providers", 0, "api_base"), "https://api.mistral.ai/v1"),
             (("config", "providers", 0, "api_key_env_var"), "REAL_KEY"),
@@ -325,7 +329,15 @@ socket.socket.connect = socket.socket.connect_ex = deny
 spec = importlib.util.spec_from_file_location("entry", sys.argv[1])
 entry = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(entry)
-result = asyncio.run(entry.native_preflight(Path.cwd(), Path(sys.argv[2])))
+from unittest.mock import patch
+import mistralai_vibe_local_harness.vibe._local_actions as local_actions
+adapters = []
+original_executor = local_actions.build_local_action_executor
+def capture_adapter(adapter):
+    adapters.append(adapter)
+    return original_executor(adapter)
+with patch.object(local_actions, "build_local_action_executor", side_effect=capture_adapter):
+    result = asyncio.run(entry.native_preflight(Path.cwd(), Path(sys.argv[2])))
 assert not connections
 assert result["model"] == "mistral-large-4"
 assert result["base_url"] == "http://model-gateway:8080/v1"
@@ -333,6 +345,30 @@ assert result["native_config_compiled"] and result["native_shell_denied"]
 assert result.get("review_report_write_allowed") is True, "review report outside /work must be explicitly allowed"
 assert result.get("runtime_config_write_denied") is True, "model cannot change its own runtime policy"
 assert result["external_hooks"] == 0
+import httpx
+from mistralai_vibe_local_harness.vibe._credentials import ProviderCredentialSnapshot
+from mistralai_vibe_local_harness.vibe.adapters import mistral as mistral_adapter
+requests = []
+def provider_reply(request):
+    requests.append(json.loads(request.content))
+    return httpx.Response(200, json={
+        "id": "offline-serialization-only", "object": "chat.completion", "created": 0,
+        "model": "mistral-large-4", "choices": [{"index": 0, "finish_reason": "stop",
+        "message": {"role": "assistant", "content": "synthetic offline response"}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
+real_client = httpx.AsyncClient
+def offline_client(**kwargs):
+    return real_client(**kwargs, transport=httpx.MockTransport(provider_reply))
+with patch.object(mistral_adapter.httpx, "AsyncClient", side_effect=offline_client):
+    adapter = adapters[0]
+    asyncio.run(mistral_adapter.execute_mistral_completion(
+        [], [], adapter, ProviderCredentialSnapshot(token="offline-dummy", headers={}, revision="offline"),
+        adapter.active_model, stream=False))
+assert len(requests) == 1
+assert requests[0].get("reasoning_effort") == "none", "thinking must explicitly disable provider reasoning"
+assert requests[0]["max_tokens"] == 150000, "Unified forwards its session cap; the gateway separately clamps to 8192"
+assert requests[0]["model"] == "mistral-large-4"
+assert not connections
 print(json.dumps(result))
 '''
             result = subprocess.run([sys.executable, "-I", "-c", code, str(AUTOMATION / "vibe_entry.py"),

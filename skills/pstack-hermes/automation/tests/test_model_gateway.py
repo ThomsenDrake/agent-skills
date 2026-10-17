@@ -542,6 +542,19 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(stderr, b"")
             self.assertEqual(json.loads(receipt.read_text())["status"], "closed")
 
+    def test_gateway_explicitly_disables_reasoning_independent_of_worker_settings(self):
+        with LocalUpstream() as upstream:
+            with running_gateway(connection_factory=upstream.connection_factory) as (server, _):
+                for options in ({}, {"reasoning_effort": "high"}, {"reasoning_effort": None},
+                                {"reasoning_effort": "none"}):
+                    with self.subTest(options=options):
+                        status, _, _ = request(server, body=json.dumps({"model": MODEL, **options}).encode())
+                        self.assertEqual(status, 200)
+                        outgoing = json.loads(upstream.requests[-1][2])
+                        self.assertEqual(outgoing.get("reasoning_effort"), "none")
+                        self.assertEqual(outgoing["max_tokens"], 8192)
+                        self.assertEqual(outgoing["n"], 1)
+
     def test_outgoing_generation_is_explicitly_bounded_even_without_client_limits(self):
         with LocalUpstream() as upstream:
             with running_gateway(connection_factory=upstream.connection_factory) as (server, _):
@@ -593,7 +606,7 @@ class GatewayTests(unittest.TestCase):
     def test_cumulative_serialized_request_budget_is_atomic_before_upstream_io(self):
         data = {"model": MODEL, "messages": [{"role": "user", "content": "hi"}]}
         raw = json.dumps(data, indent=2).encode() + b" " * 1000
-        normalized = json.dumps({**data, "max_tokens": 8192, "n": 1}, separators=(",", ":")).encode()
+        normalized = json.dumps({**data, "max_tokens": 8192, "n": 1, "reasoning_effort": "none"}, separators=(",", ":")).encode()
         limit = 2 * len(normalized)
         with LocalUpstream() as upstream:
             with running_gateway(max_total_request_bytes=limit,

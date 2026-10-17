@@ -444,6 +444,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             raise _Fault(400, "invalid_generation_parameters")
         data["max_tokens"] = min(tokens or 8192, 8192)
         data["n"] = 1
+        data["reasoning_effort"] = "none"
         try:
             body = json.dumps(data, separators=(",", ":"), allow_nan=False).encode("utf-8")
         except (ValueError, RecursionError):

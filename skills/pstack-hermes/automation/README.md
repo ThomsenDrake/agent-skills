@@ -51,7 +51,7 @@ Gateway defaults per role: 40 attempts, 262,144 bytes per request, 1,500,000 cum
 
 Successful pending proposals are deduplicated. Failed adaptations remain outstanding and retry on later reconciliation. Disable the workflow if repeated failures should stop spending before a fix.
 
-Vibe uses its explicitly selected Unified harness. Its native capability catalog is not the four legacy file-tool schemas; native grep is not advertised in this release. The offline gate compiles the real route and verifies shell/process denial. Unknown aliases, fallback warnings, missing credentials, unavailable models, failed/limited exports, and zero usage block publication.
+Vibe uses its explicitly selected Unified harness. Its native capability catalog is not the four legacy file-tool schemas; native grep is not advertised in this release. The offline gate compiles the real route and verifies shell/process denial. Unknown aliases, fallback warnings, missing credentials, unavailable models, failed/limited exports, and zero usage block publication. The pinned Unified adapter maps Vibe `thinking="low"` to explicit Mistral `reasoning_effort="none"`; `off` would omit that field. Raw/effective config must preserve `low`, an offline SDK request assertion proves the mapping, and the gateway independently forces outgoing `reasoning_effort="none"`. Unified can forward the whole-session token setting as a completion cap, so the gateway also independently clamps each completion to 8192.
 
 ## Repository configuration
 

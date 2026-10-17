@@ -1,8 +1,8 @@
 # mistral-vibe 2.26.1. The worker receives only a dummy gateway key.
 active_model = "mistral-large-4"
 allowed_models = ["mistral-large-4"]
-compaction_model = { name = "mistral-large-4", alias = "mistral-large-4", provider = "mistral", thinking = "off", auto_compact_threshold = 0 }
-vision_model = { name = "mistral-large-4", alias = "mistral-large-4", provider = "mistral", thinking = "off", auto_compact_threshold = 0, supports_images = true }
+compaction_model = { name = "mistral-large-4", alias = "mistral-large-4", provider = "mistral", thinking = "low", auto_compact_threshold = 0 }
+vision_model = { name = "mistral-large-4", alias = "mistral-large-4", provider = "mistral", thinking = "low", auto_compact_threshold = 0, supports_images = true }
 auto_compact_threshold = 0
 default_agent = "updater-writer"
 enabled_agents = ["updater-writer"]
@@ -53,7 +53,7 @@ name = "mistral-large-4"
 alias = "mistral-large-4"
 provider = "mistral"
 temperature = 0.2
-thinking = "off"
+thinking = "low"
 max_output_tokens = 8192
 supports_images = true
 auto_compact_threshold = 0
