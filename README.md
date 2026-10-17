@@ -10,7 +10,7 @@ Each skill is self-contained and follows the [Agent Skills open standard](https:
 | --- | --- |
 | [`using-omi-api`](./skills/using-omi-api/) | Comprehensive guidance for using Omi across Developer REST, Integration and OAuth, webhooks, MCP, and `omi-cli`, including authentication boundaries, safety, reliability, and known documentation gaps. |
 | [`pstack`](./skills/pstack/) | Fork of [cursor/plugins pstack](https://github.com/cursor/plugins/tree/main/pstack) v0.15.25 (MIT, Lauren Tan). 54 skills for rigorous, parallelizable engineering workflows: `poteto-mode` entry point, `architect`/`arena`/`swarm` design and orchestration, `tdd`, `unslop`, 31 `principle-*` skills, and more. Start with `setup-pstack`, then `poteto-mode`. |
-| [`pstack-hermes`](./skills/pstack-hermes/) | Hermes-native adaptation of pstack v0.15.25. The same 54 skills, with Hermes delegation, profile configuration, bot skeletons, and retained Bun helpers. Start with `setup-pstack`, then `poteto-mode`. |
+| [`pstack-hermes`](./skills/pstack-hermes/) | Hermes-native adaptation of the vendored pstack collection. The same 54 skills, with Hermes delegation, profile configuration, bot skeletons, and retained Bun helpers. Start with `setup-pstack`, then `poteto-mode`. |
 
 Omi is the first skill in this collection. Additional skills will be added as they are developed and reviewed.
 
@@ -22,6 +22,18 @@ Omi is the first skill in this collection. Additional skills will be added as th
 4. Supply credentials through an approved secret store or runtime injection, never by embedding them in the skill.
 
 Installation paths and commands vary by agent. This repository intentionally does not assume a specific client.
+
+## Automatic pstack-hermes updates
+
+GitHub Actions runs pinned Mistral Vibe CLI with Mistral Large 4 to propose semantic updates after the upstream sync. A daily reconciliation at 14:35 UTC and manual dispatch cover missed or failed runs.
+
+The updater compares old upstream, new upstream, and the accepted Hermes adaptation. It preserves Hermes-specific behavior, runs protected checks, and obtains a fresh same-model review before maintaining one update PR. Merges remain manual. Installed Hermes profiles are never changed automatically.
+
+Only existing Markdown edits are eligible. Structural changes, executable changes, invalid paths, or unsupported scope stop for human review. The writer cannot change tests, workflows, the accepted checkpoint, or publishing policy.
+
+The Mistral credential stays in an internal model gateway. The AI container receives no real provider key or GitHub token. A separate publisher receives repository write permission only after verification.
+
+Configuration, limits, recovery, and the disposable hosted smoke are documented in [the updater guide](./skills/pstack-hermes/automation/README.md). The workflows activate from the default branch after this setup is merged.
 
 ## Repository structure
 

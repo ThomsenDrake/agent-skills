@@ -1,0 +1,91 @@
+# mistral-vibe 2.26.1. The worker receives only a dummy gateway key.
+active_model = "mistral-large-4"
+allowed_models = ["mistral-large-4"]
+compaction_model = { name = "mistral-large-4", alias = "mistral-large-4", provider = "mistral", thinking = "off", auto_compact_threshold = 0 }
+vision_model = { name = "mistral-large-4", alias = "mistral-large-4", provider = "mistral", thinking = "off", auto_compact_threshold = 0, supports_images = true }
+auto_compact_threshold = 0
+default_agent = "updater-writer"
+enabled_agents = ["updater-writer"]
+enabled_tools = ["read_file", "write_file", "edit", "grep"]
+disabled_tools = ["bash", "git_bash", "powershell", "task", "web_search", "web_fetch", "skill", "cron", "todo", "scratchpad"]
+bypass_tool_permissions = false
+enable_subagents = false
+enable_background_processes = false
+managed_shell_tools_enabled = false
+enable_connectors = false
+mcp_servers = []
+tool_paths = []
+agent_paths = []
+skill_paths = []
+disabled_skills = ["*"]
+experimental_enable_registry_skills = false
+experimental_enable_model_catalog = false
+enable_telemetry = false
+enable_otel = false
+enable_update_checks = false
+enable_auto_update = false
+enable_notifications = false
+include_project_context = false
+api_timeout = 60.0
+api_retry_max_elapsed_time = 60.0
+applied_migrations = ["bash_read_only_defaults_v1"]
+
+[experiments]
+enable = false
+
+[session_logging]
+enabled = true
+generate_titles = false
+
+[utility_models]
+title = "active"
+smart_approve = "active"
+
+[[providers]]
+name = "mistral"
+api_base = "http://model-gateway:8080/v1"
+api_key_env_var = "MISTRAL_API_KEY"
+api_style = "openai"
+backend = "mistral"
+
+[[models]]
+name = "mistral-large-4"
+alias = "mistral-large-4"
+provider = "mistral"
+temperature = 0.2
+thinking = "off"
+max_output_tokens = 8192
+supports_images = true
+auto_compact_threshold = 0
+input_price = 1.36
+cached_input_price = 0.14
+output_price = 4.18
+
+[tools.read_file]
+permission = "always"
+allowlist = ["/out/audit.json"]
+denylist = ["/state", "/state/*"]
+[tools.write_file]
+permission = "always"
+allowlist = ["/out/audit.json"]
+denylist = ["/state", "/state/*", "/policy", "/policy/*"]
+[tools.edit]
+permission = "always"
+allowlist = ["/out/audit.json"]
+denylist = ["/state", "/state/*", "/policy", "/policy/*"]
+[tools.grep]
+permission = "always"
+[tools.bash]
+permission = "never"
+allowlist = []
+denylist = ["*"]
+[tools.git_bash]
+permission = "never"
+allowlist = []
+denylist = ["*"]
+[tools.powershell]
+permission = "never"
+allowlist = []
+denylist = ["*"]
+[tools.task]
+permission = "never"

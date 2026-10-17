@@ -1,0 +1,30 @@
+# Build with automation/ as the context and --platform=linux/amd64.
+# The Vibe wheel is hash-pinned; dependency resolution and this base tag are
+# not a complete supply-chain lock. Pin a reviewed base digest/dependency
+# wheel closure before claiming a reproducible image. No build secret is used.
+FROM python:3.14-slim
+
+RUN python -m pip --isolated download --index-url https://pypi.org/simple \
+      --no-deps --only-binary=:all: --dest /opt/vibe-wheel mistral-vibe==2.26.1 \
+    && python -c "import hashlib; from pathlib import Path; p = Path('/opt/vibe-wheel/mistral_vibe-2.26.1-cp312-abi3-manylinux_2_28_x86_64.whl'); expected = '1ceb43e38a2e82cb8c54e1032b011874f8422e998cf87b4a3fdf58704133de55'; digest = hashlib.sha256(p.read_bytes()).hexdigest(); digest == expected or (_ for _ in ()).throw(SystemExit('Vibe wheel hash mismatch'))" \
+    && python -m pip --isolated install --no-cache-dir --only-binary=:all: \
+      --index-url https://pypi.org/simple \
+      /opt/vibe-wheel/mistral_vibe-2.26.1-cp312-abi3-manylinux_2_28_x86_64.whl \
+    && python -m pip check \
+    && rm -rf /opt/vibe-wheel \
+    && groupadd --gid 1000 worker \
+    && useradd --uid 1000 --gid 1000 --no-create-home --home-dir /state/home worker \
+    && mkdir /work /policy /state /out \
+    && chown 1000:1000 /work /state /out
+
+COPY vibe_entry.py vibe-config.toml vibe-agent.toml /policy/
+ENV HOME=/state/home VIBE_HOME=/state/vibe TMPDIR=/state/tmp \
+    MISTRAL_API_KEY=gateway-only-not-a-provider-key \
+    LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /work
+USER 1000:1000
+# Runtime must supply a read-only sanitized /work and /policy (including task.txt),
+# capped /state, and only candidate RW (writer) or /out RW (reviewer). Host must
+# use --read-only, --cap-drop=ALL, no-new-privileges, bounded pids/CPU/memory,
+# private internal gateway-only networking, and no daemon socket/real credentials.
+ENTRYPOINT ["python", "-I", "/policy/vibe_entry.py"]
