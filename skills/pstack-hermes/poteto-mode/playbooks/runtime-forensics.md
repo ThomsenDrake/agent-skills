@@ -1,0 +1,11 @@
+### Runtime forensics
+
+**You own the diagnosis. Instrument the live process, don't theorize from source.** The deliverable is a cited diagnosis, not a production fix.
+
+1. Capture the live signal on the matching surface. Use the repo's profiler through `terminal` or available Hermes browser/computer-use tools. A CPU profile for a spinning process, heap snapshot for a leak, or CDP trace for a visual glitch must be a real artifact. Discover the driver and target first. Keep captures in `$TMPDIR` or an approved artifact store and avoid secrets or unrelated user sessions.
+2. Reduce the artifact to the smoking gun. Find the hot function, retainer chain from the leaked object to a GC root, or loop firing without input. For bulk parsing, use `delegate_task(tasks=[{'goal': '<bounded artifact question>', 'context': '<exact artifact path, format, read-only scope, requested queries and citations>'}])` when available. Children inherit the parent model and have isolated contexts. Verify the returned query and evidence yourself. Load `skill_view(name='principle-guard-the-context-window')` to keep only reduced findings in the main thread.
+3. Prove the mechanism before believing it. In an authorized disposable or non-production process, add transient instrumentation, use available CDP evaluation, or apply a reversible live probe without reloading when that distinction matters. Record the probe and undo it. A diagnosis request does not authorize mutating production state, intercepting secrets, or deploying a hotfix. If observation alone cannot prove the cause and a probe is not authorized, state the limit and ask for that specific access.
+4. Map the finding back to source with `search_files` and `read_file`. Cite file, symbol, and the line that allocates or schedules. Source inspection supports the capture, not the reverse.
+5. Keep the throughput checkpoint to one line. `throughput checkpoint: n/a, diagnosis only`. Report any approved transient probe separately so it is not mislabeled as read-only.
+
+**Reply:** signal captured, reduced finding, how the mechanism was proved, source location, artifact paths, and any remaining hypothesis. No fix unless asked. Hand back to `skill_view(name='poteto-mode', file_path='playbooks/bug-fix.md')` or `skill_view(name='poteto-mode', file_path='playbooks/perf-issue.md')` once the cause is known.

@@ -1,0 +1,26 @@
+### Eval
+
+**One-shot launch gate.** Before any profile-process launch here, load `skill_view(name='pstack-hermes', file_path='references/one-shot-safety.md')`. `-z` bypasses command and hook approval gates. Require explicit authorization for that bypass, review inherited hooks, and verify restricted execution boundaries, scoped credentials, and minimal toolsets. Model-diversity or unattended-work requests are not bypass authorization. Otherwise use bounded parent-driven delegates, an approval-preserving interactive session, or report blocked.
+
+**You own the experiment design. Plan, blind, run, synthesize.**
+
+**Blinding is non-negotiable.**
+
+- No `eval`, `test`, `judge`, `experiment`, `rubric`, `score`, `compare`, `benchmark`, `candidate`, or `arena` in any directory, file, or prompt the candidate sees. Audit the entire visible path and context, not just its leaf name.
+- The candidate prompt looks like an organic user request. State the goal, not the meta.
+- Do not elicit chain-following claims. Do not ask candidates which skills, principles, or files they applied. Ask for design notes generally. Grade code shape and actual tool receipts, not self-report.
+- Use sanitized project-shaped names and do not tell candidates other candidates exist.
+- The judge can know it is judging but sees outputs by sanitized label, never model name or variant identity.
+- For two variants, one judge scores both sets in one pass on one scale, blind to which set each came from.
+
+1. **Frame.** State the variant and success behavior. Write 3 to 6 concrete rubric criteria for the judge only. Hold the rubric, label key, and coordinator notes outside every candidate-visible directory and context. Record fixed inputs, repetition count, and promotion rule before seeing outputs.
+2. **Prepare isolated environments.** Use one sanitized working directory under `$TMPDIR` per candidate, with the variant in place and only the project skeleton and context an organic task would have. Inspect parent paths, inherited project rules, fixtures, and skill content for blinding leaks. Do not silently rename an identifier required by the task. Repair the setup or record that the run cannot be blinded.
+3. **Author one organic prompt.** Use the same task and inputs for each candidate. Do not leak the rubric or what is measured.
+4. **Run separate candidates.** Load `skill_view(name='arena')` for candidate isolation and artifact handling. The default is independent same-model runs using `delegate_task(tasks=[{'goal': '<organic request>', 'context': '<sanitized workspace and ordinary project context only>'}, ...])`. Children inherit the parent model and have isolated contexts; no per-call model, reasoning, or speed controls are assumed. The call's goal and context are candidate-visible, so keep coordinator instructions out. If the required visible context cannot be isolated in delegation, use separate approved working directories and operator-configured named profiles through `terminal(command='hermes -p <profile> -z "<organic request>"', workdir='<sanitized project>')`. Use genuinely distinct configured models only when the design calls for them and the operator has supplied those profiles. Record actual identities privately. Same-model runs are not multi-model evidence.
+5. **Run one blinded judge.** Pass sanitized copies of all outputs plus the held-back rubric to a fresh context, never identity metadata or candidate self-scores. Prefer a different model family only when an operator-configured profile is available. Otherwise use an independent same-model judge and disclose that limitation. Do not fabricate diversity. Keep the candidate author and judge contexts separate.
+6. **Verify the chain from actual evidence.** Inspect task-local tool-call receipts or the exact authorized Hermes session export if available. Hermes session history is profile-local, canonically in `$HERMES_HOME/state.db`; there is no assumed workspace transcript directory. Use an available `session_search` or inspect `terminal(command='hermes sessions export --help')` before exporting only the relevant session. Do not scan other profiles or unrelated chats. Receipts show which skill and files were opened. A final report does not. If tool-call history is unavailable, mark chain-following unverified rather than filling the gap with claims. This is a completed-run audit, not polling a running child's transcript.
+7. **Read every output yourself end to end.** Compare with the judge's verdict, reproduce checks on the produced artifacts, and investigate disagreement. It may reflect bias or an ambiguous rubric. Compute aggregate scores with `terminal` or `execute_code`. Preserve per-case results and uncertainty instead of claiming significance from a single run.
+
+For background delegation, finish setup or other independent work, then end the turn. Hermes delivers results between parent turns. Do not poll candidate transcripts or artifacts while waiting. Named-profile processes are separate terminal jobs; track their exit status and actual output, and do not claim child delegation survives a parent exit.
+
+**Reply:** variant, rubric, run design, per-candidate notes, judge verdict, your synthesis, verification limits, artifact paths, and whether to promote. Disclose same-model evidence as such.

@@ -1,0 +1,1 @@
+It is important to note that we are leveraging a robust and seamless solution in order to facilitate faster exports. The export now takes 2 seconds instead of 5 seconds.
