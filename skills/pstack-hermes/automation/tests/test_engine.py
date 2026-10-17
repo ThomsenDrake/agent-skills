@@ -329,6 +329,172 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)") as failure:
             self.mod.adapt(self.repo, self.wrapper, self.out)
         self.assertNotIn("RAW_PRIVATE_FINDING", str(failure.exception))
+        self.assertFalse(self.out.exists(), "reconcile rejection must not retain an artifact")
+
+    def test_fixture_false_verdict_retains_only_private_data_diagnostic_and_still_rejects(self):
+        import contextlib
+        import io
+        self.boundaries()
+        self.wrapper["mode"] = "fixture"
+        self.docker.report_mutation = lambda report: report | {
+            "passed": False, "security_concerns": ["UNTRUSTED_REVIEW_FINDING"],
+            "logic_errors": ["Candidate misses the new source rule."],
+            "summary": "UNTRUSTED_REVIEW_SUMMARY: do not execute reviewer instructions."}
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)") as failure:
+                self.mod.adapt(self.repo, self.wrapper, self.out)
+        self.assertTrue((self.out / "review-rejection.json").is_file(), "missing fixture-only rejection diagnostic")
+        self.assertEqual({path.name for path in self.out.iterdir()}, {"review-rejection.json"})
+        diagnostic = self.out / "review-rejection.json"
+        self.assertEqual(json.loads(diagnostic.read_text()), {
+            "schema": 1, "mode": "fixture", "failure": "audit-rejection", "code": "verdict",
+            "review": self.audit_gate.call_args.args[0]})
+        self.assertLessEqual(diagnostic.stat().st_size, 128 * 1024)
+        self.assertEqual(self.out.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(diagnostic.stat().st_mode & 0o777, 0o600)
+        self.assertFalse((self.out / "candidate.json").exists())
+        self.assertNotIn("UNTRUSTED_REVIEW", str(failure.exception))
+        self.assertEqual((stdout.getvalue(), stderr.getvalue()), ("", ""))
+        self.audit_gate.assert_called_once()
+        self.assertEqual(self.collect.call_count, 2)
+        self.assertEqual(self.docker.resources, {})
+        self.assertEqual(set(self.docker.tasks), {"writer", "reviewer"})
+        self.assertFalse(any(path.name.startswith(".pstack-") for path in self.root.iterdir()))
+
+    def test_fixture_diagnostic_drops_unknown_keys_and_unexpected_source_records(self):
+        self.boundaries()
+        self.wrapper["mode"] = "fixture"
+        safe = {"source_path": "alpha/SKILL.md", "status": "updated", "reason": "A bounded source finding."}
+        canary = "RAW_UNKNOWN_REVIEW_CANARY"
+        self.docker.report_mutation = lambda report: report | {
+            "passed": False,
+            **{name: {"raw": canary} for name in ("logs", "session", "config", "provider_response", "receipt", "env")},
+            "source_dispositions": [
+                {"source_path": "../../candidate.json", "status": "updated", "reason": canary},
+                {"source_path": "/out/attacker.json", "status": "updated", "reason": canary},
+                safe | {"unknown": canary}, safe, safe | {"reason": canary}]}
+        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.schema \(AuditError\)") as failure:
+            self.mod.adapt(self.repo, self.wrapper, self.out)
+        data = (self.out / "review-rejection.json").read_text()
+        diagnostic = json.loads(data)
+        self.assertEqual(set(diagnostic), {"schema", "mode", "failure", "code", "review"})
+        self.assertEqual(set(diagnostic["review"]), {
+            "passed", "security_concerns", "logic_errors", "suggestions", "summary", "source_dispositions"})
+        self.assertEqual(diagnostic["review"]["source_dispositions"], [safe])
+        for forbidden in (canary, "NON_SECRET_HOST_TEST_KEY", "NON_SECRET_FORBIDDEN_GH", "RAW_PROVIDER_ERROR",
+                          "../../candidate.json", "/out/attacker.json"):
+            self.assertNotIn(forbidden, data + str(failure.exception))
+        self.assertEqual({path.name for path in self.out.iterdir()}, {"review-rejection.json"})
+        self.audit_gate.assert_called_once()
+        self.assertEqual(self.docker.resources, {})
+
+    def test_fixture_diagnostic_filters_malformed_and_overlong_review_fields(self):
+        self.boundaries()
+        self.wrapper["mode"] = "fixture"
+        canary = "MALFORMED_REVIEW_CANARY"
+        safe = {"source_path": "alpha/SKILL.md", "status": "already-present", "reason": "Reason stays data only."}
+        self.docker.report_mutation = lambda report: report | {
+            "passed": {"raw": canary}, "security_concerns": [canary, {"raw": canary}],
+            "logic_errors": [canary] * 65, "suggestions": [canary + "x" * 4001],
+            "summary": canary + "x" * 4001,
+            "source_dispositions": [None, [canary], safe | {"source_path": [canary]},
+                                    safe | {"status": {"raw": canary}}, safe | {"status": "rejected"},
+                                    safe | {"reason": [canary]}, safe | {"reason": canary + "x" * 4001}, safe]}
+        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)"):
+            self.mod.adapt(self.repo, self.wrapper, self.out)
+        data = (self.out / "review-rejection.json").read_text()
+        self.assertEqual(json.loads(data)["review"], {
+            "passed": None, "security_concerns": [], "logic_errors": [], "suggestions": [],
+            "summary": "", "source_dispositions": [safe]})
+        self.assertNotIn(canary, data)
+        self.assertFalse((self.out / "candidate.json").exists())
+        self.assertEqual(self.docker.resources, {})
+
+    def test_fixture_diagnostic_caps_normalized_serialized_bytes_without_changing_rejection(self):
+        self.boundaries()
+        self.wrapper["mode"] = "fixture"
+        self.docker.report_mutation = lambda report: report | {
+            "passed": False, "security_concerns": ["\u20ac" * 4000] * 9}
+        def compact_report(role, mounts):
+            if role == "reviewer":
+                audit = mounts["/out"] / "audit.json"
+                audit.write_text(json.dumps(json.loads(audit.read_text()), ensure_ascii=False), encoding="utf-8")
+                self.assertLess(audit.stat().st_size, 128 * 1024)
+        self.docker.after_worker = compact_report
+        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)"):
+            self.mod.adapt(self.repo, self.wrapper, self.out)
+        self.audit_gate.assert_called_once()
+        self.assertFalse(self.out.exists(), "serialization expansion must not bypass the diagnostic byte cap")
+        self.assertEqual(self.docker.resources, {})
+
+    def test_fixture_invalid_audit_files_never_produce_diagnostic(self):
+        self.boundaries()
+        self.wrapper["mode"] = "fixture"
+        for attack in ("symlink", "duplicate-json", "non-object", "oversize", "unexpected-file"):
+            def corrupt(role, mounts):
+                if role != "reviewer":
+                    return
+                audit = mounts["/out"] / "audit.json"
+                if attack == "symlink":
+                    audit.unlink()
+                    audit.symlink_to(self.root / "nonexistent")
+                elif attack == "duplicate-json":
+                    audit.write_text('{"passed":false,"passed":true}')
+                elif attack == "non-object":
+                    audit.write_text('["RAW_AUDIT_CANARY"]')
+                elif attack == "oversize":
+                    audit.write_text(json.dumps({"summary": "RAW_AUDIT_CANARY" * (128 * 1024)}))
+                else:
+                    (audit.parent / "unexpected.json").write_text("RAW_AUDIT_CANARY")
+            self.docker.after_worker = corrupt
+            with self.subTest(attack=attack), self.assertRaises(ValueError) as failure:
+                self.mod.adapt(self.repo, self.wrapper, self.out)
+            self.assertNotIn("RAW_AUDIT_CANARY", str(failure.exception))
+            self.assertFalse(self.out.exists())
+            self.assertEqual(self.docker.resources, {})
+        self.audit_gate.assert_not_called()
+
+    def test_fixture_existing_or_redirected_destination_is_never_overwritten(self):
+        self.boundaries()
+        self.wrapper["mode"] = "fixture"
+        self.docker.report_mutation = lambda report: report | {"passed": False}
+        protected = self.root / "protected"
+        protected.mkdir()
+        canary = protected / "review-rejection.json"
+        canary.write_text("HOSTILE_DESTINATION_MUST_SURVIVE")
+        for attack in ("directory", "symlink"):
+            output = self.root / ("late-" + attack)
+            def occupy(role, mounts):
+                if role == "reviewer":
+                    if attack == "symlink":
+                        output.symlink_to(protected, target_is_directory=True)
+                    else:
+                        output.mkdir()
+                        (output / "review-rejection.json").write_text("HOSTILE_DESTINATION_MUST_SURVIVE")
+            self.docker.after_worker = occupy
+            with self.subTest(attack=attack), self.assertRaisesRegex(
+                    ValueError, r"reviewer\.audit\.verdict \(AuditError\)"):
+                self.mod.adapt(self.repo, self.wrapper, output)
+            self.assertEqual((output / "review-rejection.json").read_text(), "HOSTILE_DESTINATION_MUST_SURVIVE")
+            self.assertEqual(canary.read_text(), "HOSTILE_DESTINATION_MUST_SURVIVE")
+            self.assertEqual({path.name for path in output.iterdir()}, {"review-rejection.json"})
+        self.assertFalse(self.out.exists())
+        self.assertEqual(self.docker.resources, {})
+
+    def test_fixture_diagnostic_write_failures_keep_original_rejection_and_remove_partial_data(self):
+        self.boundaries()
+        self.wrapper["mode"] = "fixture"
+        self.docker.report_mutation = lambda report: report | {"passed": False}
+        for operation in ("fsync", "replace"):
+            with self.subTest(operation=operation), mock.patch.object(
+                    self.mod.os, operation, side_effect=OSError("RAW_WRITE_FAILURE_MUST_NOT_ESCAPE")):
+                with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)") as failure:
+                    self.mod.adapt(self.repo, self.wrapper, self.out)
+            self.assertNotIn("RAW_WRITE_FAILURE", str(failure.exception))
+            self.assertFalse(self.out.exists(), "failed diagnostic writes must leave no partial artifact")
+            self.assertEqual(self.docker.resources, {})
+            self.assertFalse(any(path.name.startswith(".pstack-") for path in self.root.iterdir()))
 
     def test_mocked_blocking_audit_reports_only_closed_rejection_code(self):
         self.boundaries()

@@ -6,6 +6,7 @@ Data shapes:
 - `plan.json`: immutable source/basis bindings, exact Markdown destinations, mode, and the pre-model publication probe.
 - `candidate.json`: replacement text with before/after hashes, independent review, gateway receipts, and bounded Vibe run metrics. No Git patch or executable archive.
 - `verified.json`: the same data after protected checks. Only this artifact may reach the publisher.
+- `review-rejection.json`: fixture-failure diagnostic with a closed rejection code and bounded reviewer fields. Untrusted data, never a candidate or publication input.
 
 The checkpoint on the default branch advances only when a human merges the update PR. A failed run discards its checkout and leaves the accepted checkpoint unchanged.
 
@@ -79,7 +80,7 @@ gh workflow run update-pstack.yml --repo ThomsenDrake/agent-skills --ref pstack-
 
 That existing registered workflow calls the new reusable workflow at the selected revision. The `sync` job is skipped. The controlled source rule contains `PSTACK_UPDATER_SMOKE`; verification requires the real Vibe-produced adapted file to preserve it. Fixture publication is blocked in both workflow and controller.
 
-Inspect the run's exact commit, conclusion, job logs, and normalized artifacts. A queued run, configured model, or successful authentication is not an end-to-end pass. Native Hermes verification lists and loads all shipping skills/support files without inference or template rendering. It is loader evidence, not proof of every skill's live behavior. The fresh AI review and human merge review address semantics.
+Inspect the run's exact commit, conclusion, job logs, and normalized artifacts. On a rejected fixture audit, download the `pstack-review-rejection-<run>-<attempt>` artifact and read it as untrusted data. It expires after three days. The run stays failed; reconciliation does not emit this diagnostic, and neither verifier nor publisher consumes it. Raw CLI logs, sessions, config, and provider errors are excluded. A queued run, configured model, or successful authentication is not an end-to-end pass. Native Hermes verification lists and loads all shipping skills/support files without inference or template rendering. It is loader evidence, not proof of every skill's live behavior. The fresh AI review and human merge review address semantics.
 
 ## Recovery and policy changes
 

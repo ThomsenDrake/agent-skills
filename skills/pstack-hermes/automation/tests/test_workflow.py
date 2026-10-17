@@ -36,6 +36,23 @@ class BootstrapTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_rejected_review_diagnostic_is_fixture_failure_only_and_not_publishable(self):
+        from ruamel.yaml import YAML
+        data = YAML(typ="safe").load((ROOT / ".github/workflows/update-pstack-hermes.yml").read_text())
+        uploads = [step for step in data["jobs"]["adapt"]["steps"]
+                   if step.get("name") == "Retain the rejected fixture review as untrusted data"]
+        self.assertEqual(len(uploads), 1, "missing fixture-only review diagnostic")
+        step = uploads[0]
+        self.assertEqual(step["if"], "failure() && needs.plan.outputs.mode == 'fixture'")
+        self.assertNotIn("id", step)
+        self.assertTrue(step["uses"].startswith("actions/upload-artifact@"))
+        self.assertEqual(step["with"]["path"], "${{ runner.temp }}/raw/review-rejection.json")
+        self.assertEqual(step["with"]["if-no-files-found"], "ignore")
+        self.assertEqual(step["with"]["retention-days"], 3)
+        for name in ("verify", "publish"):
+            self.assertNotIn("review-rejection", str(data["jobs"][name]))
+        self.assertIn("needs.verify.result == 'success'", data["jobs"]["publish"]["if"])
+
     def test_worker_image_and_offline_policy_checks_are_separate_from_secret_use(self):
         from ruamel.yaml import YAML
         data = YAML(typ="safe").load((ROOT / ".github/workflows/update-pstack-hermes.yml").read_text())
