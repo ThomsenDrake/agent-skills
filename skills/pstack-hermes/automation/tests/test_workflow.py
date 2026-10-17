@@ -117,6 +117,16 @@ class WorkflowTests(unittest.TestCase):
 
 
 class PromptTests(unittest.TestCase):
+    def test_writer_requires_native_file_effects_not_a_proposed_change_report(self):
+        writer = (PACKAGE / "automation/writer.md").read_text()
+        agent = (PACKAGE / "automation/vibe-agent.toml").read_text()
+        for text in (writer, agent):
+            for required in ("file_system.read_file", "file_system.search_replace", "file_path", "old_str", "new_str"):
+                self.assertIn(required, text)
+        self.assertIn("A report describing a planned edit is not an edit", writer)
+        self.assertIn("read back the candidate", writer)
+        self.assertIn("already represents the delta", writer)
+
     def test_reviewer_contract_is_independent_and_fail_closed(self):
         path = PACKAGE / "automation/reviewer.md"
         self.assertTrue(path.is_file(), "missing independent review contract")
