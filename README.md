@@ -9,6 +9,7 @@ Each skill is self-contained and follows the [Agent Skills open standard](https:
 | Skill | Description |
 | --- | --- |
 | [`using-omi-api`](./skills/using-omi-api/) | Comprehensive guidance for using Omi across Developer REST, Integration and OAuth, webhooks, MCP, and `omi-cli`, including authentication boundaries, safety, reliability, and known documentation gaps. |
+| [`pstack`](./skills/pstack/) | Fork of [cursor/plugins pstack](https://github.com/cursor/plugins/tree/main/pstack) v0.15.25 (MIT, Lauren Tan). 54 skills for rigorous, parallelizable engineering workflows: `poteto-mode` entry point, `architect`/`arena`/`swarm` design and orchestration, `tdd`, `unslop`, 31 `principle-*` skills, and more. Start with `setup-pstack`, then `poteto-mode`. |
 
 Omi is the first skill in this collection. Additional skills will be added as they are developed and reviewed.
 
@@ -31,6 +32,8 @@ skills/
     ├── scripts/       # Optional executable helpers
     └── assets/        # Optional templates and static resources
 ```
+
+`skills/pstack/` is a vendored fork: a meta `SKILL.md` index plus the 54 upstream skills as subdirectories, and agent definitions under `skills/pstack/agents/`.
 
 ## Standards
 
