@@ -1,0 +1,14 @@
+### Prototype
+
+**You own the design decision, not the code. The prototype is a throwaway instrument. The real build follows Feature.**
+
+This is the one playbook where the smallest-change and production-verification bars invert. Speed over polish, no production abstractions, and no implementation plan. The rigor is in choosing the design cheaply. Propose variations, throw an approach away, and try another. Authorization, secrets, and data boundaries do not invert.
+
+1. Scope the decision. Name the layout, interaction, density, behavior, timing, or approach the prototype will choose. No decision means no prototype. Load `skill_view(name='poteto-mode', file_path='playbooks/feature.md')` instead.
+2. Gather references when the design space is open. Use available retrieval tools or user-provided references for prior art. Summarize a moodboard of themes, palettes, and layouts and let the user choose directions when preference matters. Skip when the direction is set. Do not invent references when network access is unavailable.
+3. Build throwaway in an isolated scratch directory under `$TMPDIR`, separate from production source. Use `write_file`, `patch`, and `terminal`. For a visual decision, use vanilla HTML/CSS/JS or the lightest stack that renders the idea and a local dev server. Prefer existing dependencies. CDN assets require network access and are optional. For a behavioral or timing decision, write the smallest script that exercises the question. No production framework, formal test suite, or general abstraction is needed.
+4. Compare alternatives behind one labeled switcher, using buttons or a keypress. Load `skill_view(name='principle-exhaust-the-design-space')`. Keep the workload and inputs comparable so the switcher is evidence rather than decoration.
+5. Observe the matching surface. For a visual decision, use the repo's browser harness through `terminal` or available Hermes browser/computer-use tools to screenshot each variant and drive its interaction. A missing driver is a named blocker, not an assumed control skill. For behavior or timing, capture actual output, timing, or rendered state. The observation is the test, not an invented assertion. Start any dev server as a tracked background terminal process and verify readiness before using it.
+6. Present alternatives, tradeoffs, and a recommendation. The deliverable is the decision plus the throwaway artifact, not shippable code. On approval, hand the chosen direction to `skill_view(name='poteto-mode', file_path='playbooks/feature.md')` or load `skill_view(name='architect')` for the shape. Stop prototype servers when no longer needed unless the user asked to keep them.
+
+**Reply:** variants explored, observed evidence, tradeoffs, recommendation, and scratch path. Say plainly that the prototype is throwaway and name any unobserved surface.
