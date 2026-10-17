@@ -288,6 +288,17 @@ class LifecycleTests(unittest.TestCase):
         self.assertNotIn("RAW_PROVIDER", str(failure.exception))
         self.assertEqual(self.docker.resources, {})
 
+    def test_mocked_vibe_stop_reason_remains_a_failed_run(self):
+        self.boundaries()
+        self.docker.worker_exit = 3
+        for outcome in ("token_limit", "turn_limit", "price_limit", "deadline", "terminated", "length", "refusal"):
+            self.docker.status_mutation = lambda status: status | {"stage": "vibe-" + outcome}
+            with self.subTest(outcome=outcome), self.assertRaisesRegex(
+                    ValueError, r"writer\.worker\.vibe-" + outcome + r"\.exit3 \(ValueError\)"):
+                self.mod.adapt(self.repo, self.wrapper, self.out)
+            self.assertFalse(self.out.exists())
+            self.assertEqual(self.docker.resources, {})
+
     def test_mocked_untrusted_worker_stage_is_never_reflected(self):
         self.boundaries()
         self.docker.status_mutation = lambda status: status | {"stage": "RAW_PRIVATE_SOURCE"}

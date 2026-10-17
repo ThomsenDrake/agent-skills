@@ -347,6 +347,24 @@ def read_export(path: Path) -> dict:
     return result
 
 
+def failure_stage(path: Path, process_exit_code: int) -> str:
+    outcomes = {"usage_error": 1, "config_error": 1, "infrastructure_failure": 2,
+                "turn_limit": 3, "token_limit": 3, "price_limit": 3, "deadline": 3,
+                "terminated": 3, "length": 3, "refusal": 3, "aborted": 4}
+    try:
+        export = read_export(path)
+        outcome = export.get("outcome")
+        if (type(export.get("schema_version")) is int and export["schema_version"] == 1
+                and export.get("vibe_version") == VIBE_VERSION
+                and type(outcome) is str and outcome in outcomes
+                and type(export.get("exit_code")) is int
+                and export["exit_code"] == outcomes[outcome] == process_exit_code):
+            return "vibe-" + outcome
+    except (OSError, ValueError):
+        pass
+    return "vibe"
+
+
 @contextmanager
 def _private_output(path: Path):
     """Capture Python AND native fd output during the offline preflight."""
@@ -409,6 +427,8 @@ def run_worker(role: str, *, policy: Path = Path("/policy"), work: Path = Path("
             validate_export(read_export(state / "evidence/export.json"), completed.returncode)
             validate_staging(work)
             stage = "finished"
+        else:
+            stage = failure_stage(state / "evidence/export.json", exit_code)
     except subprocess.TimeoutExpired:
         exit_code = 124
         stage = "timeout"

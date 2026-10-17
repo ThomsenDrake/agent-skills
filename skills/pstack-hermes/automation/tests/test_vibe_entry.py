@@ -45,6 +45,29 @@ def export_fixture():
 
 
 class ExportTests(unittest.TestCase):
+    def test_failure_stage_reflects_only_closed_exit_matched_outcomes(self):
+        entry = entry_module()
+        self.assertTrue(callable(getattr(entry, "failure_stage", None)), "missing bounded Vibe stop reason")
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            path = Path(tmp) / "export.json"
+            self.assertEqual(entry.failure_stage(path, 3), "vibe")
+            for outcome, code in (("token_limit", 3), ("turn_limit", 3), ("price_limit", 3),
+                                  ("deadline", 3), ("length", 3), ("refusal", 3),
+                                  ("terminated", 3), ("infrastructure_failure", 2),
+                                  ("config_error", 1), ("usage_error", 1), ("aborted", 4)):
+                payload = export_fixture() | {"outcome": outcome, "exit_code": code,
+                                               "error": {"message": "PRIVATE ERROR CANARY"}}
+                path.write_text(json.dumps(payload))
+                self.assertEqual(entry.failure_stage(path, code), "vibe-" + outcome)
+                self.assertEqual(entry.failure_stage(path, 99), "vibe")
+            for mutation in ({"outcome": "PRIVATE OUTCOME CANARY"}, {"outcome": []},
+                             {"outcome": "finished"}, {"schema_version": True},
+                             {"vibe_version": "untrusted"}, {"exit_code": True}):
+                path.write_text(json.dumps(export_fixture() | {"outcome": "token_limit", "exit_code": 3} | mutation))
+                self.assertEqual(entry.failure_stage(path, 3), "vibe")
+            path.write_text('{"outcome":"token_limit","outcome":"PRIVATE CANARY"}')
+            self.assertEqual(entry.failure_stage(path, 3), "vibe")
+
     def test_export_reader_rejects_duplicates_nonfinite_json_and_nonregular_files(self):
         entry = entry_module()
         self.assertTrue(hasattr(entry, "read_export"), "strict export reader is missing")
@@ -208,6 +231,8 @@ class LifecycleTests(unittest.TestCase):
         entry = entry_module()
         self.assertTrue(hasattr(entry, "run_worker"), "container lifecycle is missing")
         for role, cli_code, outcome, expected in (("writer", 3, "finished", 3),
+                                                 ("reviewer", 3, "token_limit", 3),
+                                                 ("reviewer", 3, "PRIVATE OUTCOME CANARY", 3),
                                                  ("reviewer", 0, "refusal", 1),
                                                  ("writer", 0, "finished", 0)):
             with self.subTest(role=role, code=cli_code, outcome=outcome):
@@ -223,6 +248,8 @@ class LifecycleTests(unittest.TestCase):
                     (policy / "task.txt").write_text("Trusted synthetic test prompt; no model turn.")
                     payload = export_fixture()
                     payload["outcome"] = outcome
+                    if cli_code:
+                        payload["exit_code"] = cli_code
 
                     def fake_cli(command, **kwargs):
                         self.assertEqual(command, entry.build_command())
@@ -252,6 +279,8 @@ class LifecycleTests(unittest.TestCase):
                     self.assertEqual(status["exit_code"], expected)
                     self.assertEqual(status["ok"], expected == 0)
                     self.assertEqual(status["role"], role)
+                    if cli_code == 3 and outcome == "token_limit":
+                        self.assertEqual(status["stage"], "vibe-token_limit")
                     self.assertNotIn("CANARY", stdout.getvalue() + stderr.getvalue())
                     self.assertIn(b"STDOUT CANARY", (state / "local/vibe.stdout").read_bytes())
                     self.assertIn(b"STDERR CANARY", (state / "local/vibe.stderr").read_bytes())

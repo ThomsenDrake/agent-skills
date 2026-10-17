@@ -212,7 +212,11 @@ def _phase(role, snapshots, policy, receipts, report=None, *, progress=lambda de
                     and type(status["schema"]) is int and status["schema"] == 1
                     and status["role"] == role and type(status["ok"]) is bool
                     and type(status["exit_code"]) is int and 0 <= status["exit_code"] <= 255
-                    and status["stage"] in ("startup", "preflight", "vibe", "export", "finished", "timeout")):
+                    and status["stage"] in (
+                        "startup", "preflight", "vibe", "export", "finished", "timeout",
+                        "vibe-usage_error", "vibe-config_error", "vibe-infrastructure_failure",
+                        "vibe-turn_limit", "vibe-token_limit", "vibe-price_limit", "vibe-deadline",
+                        "vibe-terminated", "vibe-length", "vibe-refusal", "vibe-aborted")):
                 progress(f"worker.{status['stage']}.exit{status['exit_code']}")
             _require(completed.returncode == 0
                      and type(status.get("schema")) is int and type(status.get("exit_code")) is int
