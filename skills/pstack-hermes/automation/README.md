@@ -34,7 +34,7 @@ Writer and reviewer both use `mistral-large-4` through Mistral's API. They have 
 - The writer gets no repository token, real provider key, Git checkout, live home, messaging configuration, or Docker socket.
 - Docker enforces read-only input/policy mounts, a bounded writable candidate, non-root execution, dropped capabilities, resource limits, and internal-only networking. Profiles and worktrees are not used as security sandboxes.
 - The gateway exposes only the pinned model route. It injects authentication itself, denies redirects, and writes receipts outside the AI's mounts.
-- Raw Vibe transcripts, session journals, and provider errors are not publication artifacts. Gateway receipts are run evidence, not provider-signed attestations.
+- Raw Vibe transcripts, session journals, and provider errors are not publication artifacts. Host logs expose only a bounded tool-effect projection: fixed kind/status/target/error labels and boolean success, never tool arguments, paths, output, messages, or reasoning. Gateway receipts are run evidence, not provider-signed attestations.
 - Published data comes from the verifier's exact artifact ID in the current workflow, not a branch-supplied filename or a model's claim that tests passed.
 
 The existing upstream sync remains a separate privileged workflow. This updater neither runs that sync itself nor edits its vendored output on repository branches. Fixture mode changes source only in disposable runner checkouts and cannot publish.

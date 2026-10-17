@@ -162,6 +162,179 @@ class ExportTests(unittest.TestCase):
                     entry.validate_export(bad, 0)
 
 
+class EffectSummaryTests(unittest.TestCase):
+    @staticmethod
+    def effect(kind: object = "file_edit", status: object = "completed", success: object = True,
+               path: object = "/work/candidate/SKILL.md"):
+        return {"type": "effect", "id": "PRIVATE ID CANARY", "sessionId": "PRIVATE SESSION CANARY",
+                "createdAt": 0, "updatedAt": 0, "generationStatus": "completed",
+                "title": "PRIVATE TITLE CANARY",
+                "detail": {"kind": kind, "toolName": "PRIVATE TOOL NAME CANARY",
+                           "display": {"summary": "PRIVATE SUMMARY CANARY", "statusText": "PRIVATE STATUS CANARY"},
+                           "input": {"filePath": path, "oldString": "PRIVATE OLD CANARY",
+                                     "newString": "PRIVATE NEW CANARY", "content": "PRIVATE CONTENT CANARY"}},
+                "state": {"status": status, "display": {"success": success, "message": "PRIVATE MESSAGE CANARY"},
+                          "output": {"secret": "PRIVATE OUTPUT CANARY"}, "outputText": "PRIVATE RAW CANARY"},
+                "config": {"secret": "PRIVATE CONFIG CANARY"}, "unknown": "PRIVATE UNKNOWN CANARY"}
+
+    def test_summary_returns_only_closed_effect_metadata_in_history_order(self):
+        entry = entry_module()
+        self.assertTrue(callable(getattr(entry, "effect_summary", None)), "missing closed effect metadata helper")
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            path = Path(tmp) / "vibe.stdout"
+            failed = self.effect("file_edit", "failed", False, "/out/audit.json")
+            failed["state"]["error"] = {"code": "tool_denied", "message": "PRIVATE ERROR CANARY"}
+            unknown = self.effect("PRIVATE KIND CANARY", "PRIVATE STATE CANARY", 1, "/private/CANARY")
+            unknown["state"]["error"] = {"code": "PRIVATE ERROR CODE CANARY"}
+            path.write_text(json.dumps([
+                {"type": "user_message", "text": "PRIVATE PROMPT CANARY"},
+                self.effect("file_read", "pending", None, "/work/current-hermes/SKILL.md"),
+                self.effect("file_write", "completed", True), failed, unknown,
+                {"type": "assistant_message", "text": "PRIVATE RESPONSE CANARY"},
+            ]))
+            summary = entry.effect_summary(path)
+            self.assertEqual(summary, {"effects": [
+                {"kind": "file_read", "status": "pending", "success": None, "target": "baseline", "error": None},
+                {"kind": "file_write", "status": "completed", "success": True, "target": "candidate", "error": None},
+                {"kind": "file_edit", "status": "failed", "success": False, "target": "report", "error": "tool_denied"},
+                {"kind": "other", "status": "other", "success": None, "target": "other", "error": "other"},
+            ]})
+            self.assertNotIn("CANARY", json.dumps(summary))
+
+    def test_summary_uses_exact_lexical_roots_and_exact_boolean_success(self):
+        entry = entry_module()
+        cases = (("/work/candidate/a", "candidate"), ("/work/current-hermes/a", "baseline"),
+                 ("/work/old-upstream/a", "old"), ("/work/new-upstream/a", "new"),
+                 ("/out/audit.json", "report"), ("/out/audit.json/extra", "other"),
+                 ("/out/./audit.json", "other"), ("/work/candidate", "other"),
+                 ("/work/candidate-other/a", "other"), ("/work//candidate/a", "other"),
+                 ("/work/candidate/../secret", "other"), ("/work/candidate/a/../../b", "other"),
+                 ("../work/candidate/a", "other"), ("candidate/a", "other"),
+                 (" /work/candidate/a", "other"), (None, "other"), ([], "other"))
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            path = Path(tmp) / "vibe.stdout"
+            for file_path, target in cases:
+                path.write_text(json.dumps([self.effect(path=file_path)]))
+                self.assertEqual(entry.effect_summary(path)["effects"][0]["target"], target)
+            for value in (True, False, None, 0, 1, "true", [], {}):
+                path.write_text(json.dumps([self.effect(success=value)]))
+                actual = entry.effect_summary(path)["effects"][0]["success"]
+                self.assertIs(actual, value if type(value) is bool else None)
+
+    def test_summary_filters_malformed_rows_and_closes_every_metadata_field(self):
+        entry = entry_module()
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            path = Path(tmp) / "vibe.stdout"
+            rows = [None, [], "PRIVATE CANARY", 3, False, {}, {"type": ["effect"]},
+                    {"type": "effect"}, {"type": "effect", "detail": [], "state": {}},
+                    {"type": "effect", "detail": {}, "state": "PRIVATE CANARY"}]
+            rows.append({"type": "effect", "detail": {"kind": [], "input": []},
+                         "state": {"status": {}, "display": [], "error": {"code": []}}})
+            kinds = ("file_read", "file_write", "file_edit", "file_search", "other", "PRIVATE CANARY")
+            statuses = ("pending", "running", "blocked", "completed", "failed", "cancelled", "skipped", "other")
+            codes = ("tool_denied", "approval_required", "invalid_arguments", "tool_execution_error",
+                     "file_not_found", "other", "PRIVATE CANARY", None)
+            for index, status in enumerate(statuses):
+                row = self.effect(kinds[index % len(kinds)], status, False)
+                row["state"]["error"] = {"code": codes[index], "message": "PRIVATE CANARY"}
+                rows.append(row)
+            path.write_text(json.dumps(rows))
+            summary = entry.effect_summary(path)
+            self.assertEqual(len(summary["effects"]), 9)
+            for row in summary["effects"]:
+                self.assertEqual(set(row), {"kind", "status", "success", "target", "error"})
+                self.assertIn(row["kind"], kinds[:-1])
+                self.assertIn(row["status"], statuses)
+                self.assertIn(row["target"], ("candidate", "baseline", "old", "new", "report", "other"))
+                self.assertIn(row["error"], codes[:6] + (None,))
+                self.assertTrue(row["success"] is None or type(row["success"]) is bool)
+            self.assertNotIn("CANARY", json.dumps(summary))
+            # Native argument spellings and display text are not path metadata.
+            row = self.effect(path=None)
+            row["detail"]["input"] = {"file_path": "/work/candidate/a", "path": "/work/candidate/a"}
+            path.write_text(json.dumps([row]))
+            self.assertEqual(entry.effect_summary(path)["effects"][0]["target"], "other")
+
+    def test_summary_rejects_ambiguous_invalid_and_nonfinite_documents_without_output(self):
+        entry = entry_module()
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            path = Path(tmp) / "vibe.stdout"
+            documents = (b"", b"PRIVATE RAW CANARY", b"{}", b"null", b"[", b"[] PRIVATE CANARY",
+                         b'[1,{"unknown":1,"unknown":2}]',
+                         b'[{"type":"effect","type":"PRIVATE CANARY"}]',
+                         b'[{"unknown":{"deep":1,"deep":2}}]',
+                         b"[NaN]", b"[Infinity]", b"[-Infinity]", b"[1e9999]", b"[-1e9999]",
+                         b'["\xff"]', b"[" * 2000 + b"]" * 2000)
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                for data in documents:
+                    path.write_bytes(data)
+                    self.assertEqual(entry.effect_summary(path), {"effects": []})
+            self.assertEqual(stdout.getvalue() + stderr.getvalue(), "")
+
+    def test_summary_enforces_file_row_and_effect_bounds(self):
+        entry = entry_module()
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            path = Path(tmp) / "vibe.stdout"
+            maximum = 2 * 1024 * 1024
+            data = json.dumps([self.effect()]).encode()
+            path.write_bytes(data + b" " * (maximum - len(data)))
+            self.assertEqual(len(entry.effect_summary(path)["effects"]), 1)
+            path.write_bytes(data + b" " * (maximum + 1 - len(data)))
+            self.assertEqual(entry.effect_summary(path), {"effects": []})
+            # Size can grow after fstat; the bounded read must reject it too.
+            info = list(path.stat())
+            info[6] = 0
+            with patch.object(entry.os, "fstat", return_value=os.stat_result(info)):
+                self.assertEqual(entry.effect_summary(path), {"effects": []})
+            path.write_text(json.dumps([self.effect("file_read")] * 999 + [self.effect("file_edit")]))
+            summary = entry.effect_summary(path)
+            self.assertEqual(len(summary["effects"]), 80)
+            self.assertTrue(all(row["kind"] == "file_read" for row in summary["effects"]))
+            path.write_text(json.dumps([self.effect()] * 1001))
+            self.assertEqual(entry.effect_summary(path), {"effects": []})
+
+    def test_summary_never_follows_links_or_reads_special_files(self):
+        entry = entry_module()
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            root = Path(tmp)
+            regular, link = root / "vibe.stdout", root / "link"
+            self.assertEqual(entry.effect_summary(regular), {"effects": []})
+            self.assertEqual(entry.effect_summary(root), {"effects": []})
+            regular.write_text(json.dumps([self.effect()]))
+            link.symlink_to(regular)
+            self.assertEqual(entry.effect_summary(link), {"effects": []})
+            link.unlink()
+            link.symlink_to(root / "missing")
+            self.assertEqual(entry.effect_summary(link), {"effects": []})
+            link.unlink()
+            os.link(regular, link)
+            self.assertEqual(entry.effect_summary(link), {"effects": []})
+            self.assertEqual(entry.effect_summary(regular), {"effects": []})
+            link.unlink()
+            regular.unlink()
+            os.mkfifo(regular)
+            self.assertEqual(entry.effect_summary(regular), {"effects": []})
+
+    @unittest.skipUnless(importlib.util.find_spec("vibe"), "requires pinned Vibe wheel")
+    def test_summary_matches_released_public_effect_entry_camelcase_json(self):
+        from vibe.app_server.models import PublicEffectEntry
+        entry = entry_module()
+        schema = PublicEffectEntry.model_json_schema()
+        self.assertIn("filePath", schema["$defs"]["FileWriteEffectInput"]["properties"])
+        self.assertIn("toolName", schema["$defs"]["FileWriteEffectDetail"]["properties"])
+        row = self.effect("file_write")
+        row.pop("config")
+        row.pop("unknown")
+        row["detail"]["input"] = {"filePath": "/work/candidate/SKILL.md", "content": "PRIVATE CANARY"}
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            path = Path(tmp) / "vibe.stdout"
+            path.write_text("[" + PublicEffectEntry.model_validate(row).model_dump_json(by_alias=True) + "]")
+            self.assertEqual(entry.effect_summary(path), {"effects": [
+                {"kind": "file_write", "status": "completed", "success": True, "target": "candidate", "error": None},
+            ]})
+
+
 class IsolationTests(unittest.TestCase):
     def test_staging_rejects_nested_agent_controls_symlinks_and_special_files(self):
         entry = entry_module()
@@ -267,6 +440,7 @@ class LifecycleTests(unittest.TestCase):
                         return subprocess.CompletedProcess(command, cli_code)
 
                     async def offline_preflight(*args):
+                        self.assertEqual(args, (work, state / "vibe", role))
                         print("PRIVATE PYTHON PREFLIGHT CANARY")
                         os.write(1, b"PRIVATE NATIVE STDOUT CANARY")
                         os.write(2, b"PRIVATE NATIVE STDERR CANARY")
@@ -293,6 +467,38 @@ class LifecycleTests(unittest.TestCase):
                     self.assertIn("PRIVATE NATIVE STDERR CANARY", private)
                     self.assertIn("PRIVATE PYTHON PREFLIGHT CANARY", private)
 
+    def test_worker_preflight_os_failure_stops_before_inference_and_keeps_errors_private(self):
+        entry = entry_module()
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+            root = Path(tmp)
+            work, state, policy = root / "work", root / "state", root / "policy"
+            for path in (work, state, policy):
+                path.mkdir()
+            for name in ("old-upstream", "new-upstream", "current-hermes", "candidate"):
+                (work / name).mkdir()
+            for name in ("vibe-config.toml", "vibe-agent.toml"):
+                (policy / name).write_bytes((AUTOMATION / name).read_bytes())
+            (policy / "task.txt").write_text("Trusted offline test prompt.")
+
+            async def failed_preflight(*args):
+                self.assertEqual(args, (work, state / "vibe", "writer"))
+                raise PermissionError("PRIVATE NATIVE OS FAILURE CANARY")
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.dict(os.environ, {}, clear=True), \
+                    patch.object(entry, "native_preflight", side_effect=failed_preflight), \
+                    patch.object(entry.subprocess, "run") as inference, \
+                    redirect_stdout(stdout), redirect_stderr(stderr):
+                code = entry.run_worker("writer", policy=policy, work=work, state=state)
+            self.assertEqual(code, 1)
+            self.assertEqual(json.loads(stdout.getvalue()), {"schema": 1, "role": "writer", "ok": False,
+                                                           "exit_code": 1, "stage": "preflight"})
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertNotIn("CANARY", stdout.getvalue())
+            self.assertIn("PRIVATE NATIVE OS FAILURE CANARY", (state / "local/preflight.log").read_text())
+            inference.assert_not_called()
+            self.assertFalse((state / "local/vibe.stdout").exists())
+
     def test_entry_cli_rejects_contamination_before_touching_mounts(self):
         result = subprocess.run([sys.executable, "-I", str(AUTOMATION / "vibe_entry.py"), "--role", "reviewer"],
                                 env={"PATH": "/usr/local/bin:/usr/bin:/bin", "GH_TOKEN": "SYNTHETIC CANARY"},
@@ -317,6 +523,7 @@ class NativePreflightTests(unittest.TestCase):
             state.mkdir()
             for name in ("old-upstream", "new-upstream", "current-hermes", "candidate"):
                 (work / name).mkdir()
+            (work / "candidate/SKILL.md").write_text("existing candidate content must survive")
             entry.prepare_home(AUTOMATION, state)
             code = '''
 import asyncio, importlib.util, json, socket, sys
@@ -331,13 +538,36 @@ entry = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(entry)
 from unittest.mock import patch
 import mistralai_vibe_local_harness.vibe._local_actions as local_actions
-adapters = []
+adapters, effects = [], []
 original_executor = local_actions.build_local_action_executor
+def snapshot():
+    return {p.relative_to(Path.cwd()): (p.stat().st_mode, p.read_bytes() if p.is_file() else None)
+            for p in Path.cwd().rglob("*")}
+before, config_before = snapshot(), None
 def capture_adapter(adapter):
+    global config_before
     adapters.append(adapter)
-    return original_executor(adapter)
+    config_before = Path(sys.argv[2], "config.toml").read_bytes()
+    execute = original_executor(adapter)
+    async def capture_effect(action):
+        result = await execute(action)
+        call = action.call
+        if call.name in {"file_system.write_file", "file_system.search_replace"}:
+            args = call.arguments
+            path = Path(args.get("path", args.get("file_path", "")))
+            if path.parent == Path.cwd() / "candidate":
+                assert result.type == "tool_succeeded", "native writer effect did not complete"
+                expected = args["content"] if call.name.endswith("write_file") else args["content"][0]["new_str"]
+                assert path.read_text() == expected, "native writer effect must change real disk contents"
+                effects.append(call.name)
+        return result
+    return capture_effect
 with patch.object(local_actions, "build_local_action_executor", side_effect=capture_adapter):
     result = asyncio.run(entry.native_preflight(Path.cwd(), Path(sys.argv[2])))
+assert effects == ["file_system.write_file", "file_system.search_replace"], "positive native writer create/edit probes missing"
+after = snapshot()
+assert before == after, "native probes must leave candidate contents unchanged"
+assert Path(sys.argv[2], "config.toml").read_bytes() == config_before, "native probes must not change runtime config"
 assert not connections
 assert result["model"] == "mistral-large-4"
 assert result["base_url"] == "http://model-gateway:8080/v1"
@@ -380,6 +610,109 @@ print(json.dumps(result))
             result_data = json.loads(result.stdout.splitlines()[-1])
             self.assertEqual(result_data["backend"], "mistral")
             self.assertTrue(result_data["native_shell_denied"])
+
+    def test_native_preflight_rejects_unknown_role_before_discovery(self):
+        import asyncio
+        entry = entry_module()
+        for role in ("PRIVATE ROLE CANARY", "", None, [], True):
+            with self.subTest(role=role), patch.object(entry, "validate_staging") as staging:
+                with self.assertRaisesRegex(ValueError, "^invalid worker role$"):
+                    asyncio.run(entry.native_preflight(Path("/not-read"), Path("/not-read"), role))
+                staging.assert_not_called()
+
+    @unittest.skipUnless(importlib.util.find_spec("vibe"), "requires pinned Vibe wheel")
+    def test_native_writer_probe_cleanup_role_isolation_and_real_os_failure(self):
+        entry = entry_module()
+        code = '''
+import asyncio, importlib.util, os, socket, stat, sys
+from pathlib import Path
+from unittest.mock import patch
+connections = []
+def deny(*a, **k):
+    connections.append(True)
+    raise AssertionError("network forbidden")
+socket.socket.connect = socket.socket.connect_ex = deny
+spec = importlib.util.spec_from_file_location("entry", sys.argv[1])
+entry = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(entry)
+import mistralai_vibe_local_harness.vibe._local_actions as local_actions
+home, mode = Path(sys.argv[2]), sys.argv[3]
+candidate = Path.cwd() / "candidate"
+probe = candidate / entry._WRITER_PROBE_NAME
+if mode in {"preexisting", "reviewer"}:
+    probe.write_text("PREEXISTING MUST SURVIVE")
+if mode in {"os_readonly", "reviewer"}:
+    candidate.chmod(0o555)
+def snapshot():
+    return {p.relative_to(Path.cwd()): (stat.S_IMODE(p.stat().st_mode), p.read_bytes() if p.is_file() else None)
+            for p in Path.cwd().rglob("*")}
+before, config_before = snapshot(), None
+original_executor = local_actions.build_local_action_executor
+attempted, results = [], []
+last_write = None
+def capture_adapter(adapter):
+    global config_before
+    # Trusted config loading migrates the fresh state before compiling adapters.
+    config_before = (home / "config.toml").read_bytes()
+    execute = original_executor(adapter)
+    async def effect(action):
+        global last_write
+        call = action.call
+        if call.name in {"file_system.write_file", "file_system.search_replace"}:
+            path = Path(call.arguments.get("path", call.arguments.get("file_path", "")))
+            if path.parent == candidate:
+                attempted.append(call.name)
+                if mode == "edit_noop" and call.name.endswith("search_replace"):
+                    return last_write
+                result = await execute(action)
+                results.append(result.type)
+                if call.name.endswith("write_file"):
+                    last_write = result
+                    if mode == "write_wrong":
+                        path.write_text("NOT THE REQUESTED CONTENT")
+                    if mode == "write_raise":
+                        raise OSError("PRIVATE NATIVE ERROR CANARY")
+                if call.name.endswith("search_replace") and mode == "edit_raise":
+                    raise OSError("PRIVATE NATIVE ERROR CANARY")
+                return result
+        return await execute(action)
+    return effect
+failed = False
+try:
+    with patch.object(local_actions, "build_local_action_executor", side_effect=capture_adapter):
+        asyncio.run(entry.native_preflight(Path.cwd(), home, "reviewer" if mode == "reviewer" else "writer"))
+except (OSError, ValueError):
+    failed = True
+assert failed == (mode != "reviewer"), "native write/edit failure must block before inference"
+assert not connections
+assert snapshot() == before, "native probe must preserve original candidate bytes and permissions"
+assert (home / "config.toml").read_bytes() == config_before, "native policy must remain unchanged"
+if mode in {"preexisting", "reviewer"}:
+    assert not attempted, "never overwrite or delete a preexisting probe; reviewers must not probe candidate"
+else:
+    assert attempted[0] == "file_system.write_file"
+    assert not probe.exists(), "owned native probe must be removed even on partial failure"
+if mode == "os_readonly":
+    assert results == ["tool_failed"], "OS write denial must be exercised by the actual native executor"
+print("native role/cleanup contract passed")
+'''
+        for mode in ("preexisting", "reviewer", "write_wrong", "edit_noop", "write_raise", "edit_raise", "os_readonly"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as tmp:
+                root = Path(tmp)
+                work, state = root / "work", root / "state"
+                work.mkdir()
+                state.mkdir()
+                for name in ("old-upstream", "new-upstream", "current-hermes", "candidate"):
+                    (work / name).mkdir()
+                (work / "candidate/SKILL.md").write_text("source must remain unchanged")
+                entry.prepare_home(AUTOMATION, state)
+                result = subprocess.run([sys.executable, "-I", "-c", code, str(AUTOMATION / "vibe_entry.py"),
+                                         str(state / "vibe"), mode], cwd=work,
+                                        env={"HOME": str(state / "home"), "VIBE_HOME": str(state / "vibe"),
+                                             "VIBE_TEST_DISABLE_KEYRING": "1", "PATH": "/usr/local/bin:/usr/bin:/bin"},
+                                        capture_output=True, text=True, timeout=60)
+                (work / "candidate").chmod(0o755)
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
 
 class ImageTests(unittest.TestCase):

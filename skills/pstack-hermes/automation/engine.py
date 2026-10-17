@@ -76,6 +76,32 @@ def validate_receipt(data: dict) -> dict:
     return data
 
 
+def validate_effects(data: dict) -> dict:
+    _require(type(data) is dict and set(data) == {"effects"}
+             and type(data["effects"]) is list and len(data["effects"]) <= 40, "invalid effect metadata")
+    for effect in data["effects"]:
+        _require(type(effect) is dict and set(effect) == {"kind", "status", "success", "target", "error"},
+                 "invalid effect metadata fields")
+        _require(effect["kind"] in ("file_read", "file_write", "file_edit", "file_search", "other")
+                 and effect["status"] in ("pending", "running", "blocked", "completed", "failed", "cancelled", "skipped", "other")
+                 and (effect["success"] is None or type(effect["success"]) is bool)
+                 and effect["target"] in ("candidate", "baseline", "old", "new", "report", "other")
+                 and effect["error"] in (None, "tool_denied", "approval_required", "invalid_arguments",
+                                         "tool_execution_error", "file_not_found", "other"), "invalid effect metadata value")
+    return data
+
+
+EFFECT_HELPER = """import json,runpy
+from pathlib import Path
+try:
+    policy = runpy.run_path('/policy/vibe_entry.py')
+    summary = policy['effect_summary'](Path('/state/local/vibe.stdout'))
+    print(json.dumps({'effects': summary['effects'][:40]}, allow_nan=False))
+except Exception:
+    print('{"effects":[]}')
+"""
+
+
 EXPORT_HELPER = """import json,runpy
 from pathlib import Path
 try:
@@ -231,7 +257,13 @@ def _phase(role, snapshots, policy, receipts, report=None, *, progress=lambda de
         result = _docker(["run", "--rm", "--name", helper, "--label", owned.label, "--network", "none",
                           *hardening, "--mount", f"type=volume,src={state},dst=/state,readonly",
                           "--entrypoint", "python", IMAGE, "-I", "-c", EXPORT_HELPER], timeout=60)
-        return receipt, validate_run(_json(result.stdout))
+        metrics = validate_run(_json(result.stdout))
+        trace = _docker(["run", "--rm", "--name", helper, "--label", owned.label, "--network", "none",
+                         *hardening, "--mount", f"type=volume,src={state},dst=/state,readonly,volume-nocopy",
+                         "--entrypoint", "python", IMAGE, "-I", "-c", EFFECT_HELPER], timeout=60)
+        effects = validate_effects(_json(trace.stdout))
+        print(json.dumps({"phase": role, **effects}, sort_keys=True))
+        return receipt, metrics
     finally:
         owned.cleanup()
 

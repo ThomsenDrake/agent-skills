@@ -38,6 +38,7 @@ DISABLED_FLAGS = (
     "experimental_enable_registry_skills", "experimental_enable_model_catalog",
 )
 LIMITS = {"max_turns": 40, "max_price": 2, "max_tokens": 150000, "time_limit_s": 900}
+_WRITER_PROBE_NAME = "pstack-updater-native-writer-probe-41be8f2a.txt"
 
 
 def _require(condition: bool, message: str) -> None:
@@ -173,13 +174,14 @@ def build_command() -> list[str]:
     return command
 
 
-async def native_preflight(work: Path, vibe_home: Path) -> dict:
+async def native_preflight(work: Path, vibe_home: Path, role: str = "writer") -> dict:
     """Compile the actual 2.26.1 Unified route. No turn or inference is sent.
 
     The four CLI filters are Python ToolManager policy, NOT a claim of four
     model-facing legacy tools. Unified advertises native capabilities and does
     not advertise grep in this release. Check native shell/process denial too.
     """
+    _require(type(role) is str and role in ("writer", "reviewer"), "invalid worker role")
     validate_staging(work)
     _require(importlib.metadata.version("mistral-vibe") == VIBE_VERSION, "Vibe package pin changed")
     raw = tomllib.loads((vibe_home / "config.toml").read_text(encoding="utf-8"))
@@ -279,6 +281,35 @@ async def native_preflight(work: Path, vibe_home: Path) -> dict:
                 "path": "/state/vibe/config.toml", "content": "DENIAL PROBE; MUST NEVER BE WRITTEN"})))
         _require(denied_write.type == "tool_failed" and "tool_denied" in denied_write.model_dump_json(),
                  "native runtime policy writes were not denied")
+        if role == "writer":
+            probe = work / "candidate" / _WRITER_PROBE_NAME
+            _require(not os.path.lexists(probe), "native writer probe already exists")
+            owned = False
+            initial, edited = "native writer probe before\n", "native writer probe after\n"
+            try:
+                try:
+                    written = await execute(RustRuntimeBuiltinToolCallAction(
+                        action_id="policy-writer-create", turn_id="policy-no-inference", call_id="policy-create",
+                        call=RustRuntimeBuiltinToolCall(name="file_system.write_file", arguments={
+                            "path": str(probe), "content": initial})))
+                finally:
+                    # The path was absent before this isolated native action.
+                    # Claim only its new regular file, including partial failure.
+                    if os.path.lexists(probe):
+                        info = probe.lstat()
+                        owned = stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                _require(written.type == "tool_succeeded" and owned,
+                         "native writer create failed")
+                _require(probe.read_bytes() == initial.encode("utf-8"), "native writer create had no effect")
+                changed = await execute(RustRuntimeBuiltinToolCallAction(
+                    action_id="policy-writer-edit", turn_id="policy-no-inference", call_id="policy-edit",
+                    call=RustRuntimeBuiltinToolCall(name="file_system.search_replace", arguments={
+                        "file_path": str(probe), "content": [{"old_str": initial, "new_str": edited}]})))
+                _require(changed.type == "tool_succeeded", "native writer edit failed")
+                _require(probe.read_bytes() == edited.encode("utf-8"), "native writer edit had no effect")
+            finally:
+                if owned:
+                    probe.unlink()
         return {**bindings, "native_config_compiled": True, "native_shell_denied": True,
                 "review_report_write_allowed": True, "runtime_config_write_denied": True,
                 "external_hooks": 0}
@@ -347,6 +378,82 @@ def read_export(path: Path) -> dict:
     return result
 
 
+def effect_summary(path: Path) -> dict:
+    """Return only closed effect metadata from private ``--output json`` history.
+
+    This is untrusted diagnostic data, never an acceptance gate or proof of a
+    disk effect. Invalid/nonregular/oversize documents return {"effects": []}.
+    Read at most 2 MiB and 1000 history rows; keep at most 80 effects in order.
+    No source paths, tool names, arguments, output, messages, or IDs escape.
+    """
+    empty = {"effects": []}
+    maximum = 2 * 1024 * 1024
+
+    def unique(pairs):
+        result = {}
+        for name, value in pairs:
+            _require(name not in result, "duplicate private history key")
+            result[name] = value
+        return result
+
+    def reject_constant(value):
+        raise ValueError("nonfinite private history number")
+
+    def finite_float(value):
+        number = float(value)
+        _require(math.isfinite(number), "nonfinite private history number")
+        return number
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not (stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= maximum):
+                return empty
+            data = stream.read(maximum + 1)
+            if len(data) > maximum:
+                return empty
+        history = json.loads(data, object_pairs_hook=unique, parse_constant=reject_constant,
+                             parse_float=finite_float)
+        if type(history) is not list or len(history) > 1000:
+            return empty
+    except (OSError, ValueError, RecursionError):
+        return empty
+
+    def closed(value, choices):
+        return value if type(value) is str and value in choices else "other"
+
+    kinds = ("file_read", "file_write", "file_edit", "file_search")
+    statuses = ("pending", "running", "blocked", "completed", "failed", "cancelled", "skipped")
+    codes = ("tool_denied", "approval_required", "invalid_arguments", "tool_execution_error", "file_not_found")
+    roots = (("/work/candidate/", "candidate"), ("/work/current-hermes/", "baseline"),
+             ("/work/old-upstream/", "old"), ("/work/new-upstream/", "new"))
+    effects = []
+    for row in history:
+        if type(row) is not dict or row.get("type") != "effect":
+            continue
+        detail, state = row.get("detail"), row.get("state")
+        if type(detail) is not dict or type(state) is not dict:
+            continue
+        display, inputs, error = state.get("display"), detail.get("input"), state.get("error")
+        success = display.get("success") if type(display) is dict else None
+        code = error.get("code") if type(error) is dict else None
+        file_path = inputs.get("filePath") if type(inputs) is dict else None
+        target = "other"
+        if type(file_path) is str and ".." not in file_path.split("/"):
+            if file_path == "/out/audit.json":
+                target = "report"
+            else:
+                target = next((label for prefix, label in roots if file_path.startswith(prefix)), "other")
+        effects.append({"kind": closed(detail.get("kind"), kinds),
+                        "status": closed(state.get("status"), statuses),
+                        "success": success if type(success) is bool else None,
+                        "target": target, "error": closed(code, codes) if code is not None else None})
+        if len(effects) == 80:
+            break
+    return {"effects": effects}
+
+
 def failure_stage(path: Path, process_exit_code: int) -> str:
     outcomes = {"usage_error": 1, "config_error": 1, "infrastructure_failure": 2,
                 "turn_limit": 3, "token_limit": 3, "price_limit": 3, "deadline": 3,
@@ -412,7 +519,7 @@ def run_worker(role: str, *, policy: Path = Path("/policy"), work: Path = Path("
         os.chdir(work)
         stage = "preflight"
         with _private_output(local / "preflight.log"):
-            bindings = asyncio.run(native_preflight(work, state / "vibe"))
+            bindings = asyncio.run(native_preflight(work, state / "vibe", role))
         (state / "preflight.json").write_text(json.dumps(bindings, sort_keys=True) + "\n", encoding="utf-8")
         stage = "vibe"
         with (local / "vibe.stdout").open("xb") as stdout, (local / "vibe.stderr").open("xb") as stderr:

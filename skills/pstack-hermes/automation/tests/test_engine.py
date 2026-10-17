@@ -47,6 +47,21 @@ def metrics():
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_effect_trace_is_closed_metadata_and_never_raw_content(self):
+        mod = engine(self)
+        self.assertTrue(callable(getattr(mod, "validate_effects", None)), "missing closed effect metadata gate")
+        effect = {"kind": "file_edit", "status": "completed", "success": True,
+                  "target": "candidate", "error": None}
+        self.assertEqual(mod.validate_effects({"effects": [effect]}), {"effects": [effect]})
+        for change in ({"kind": "RAW_SOURCE"}, {"status": "RAW_STATUS"},
+                       {"success": 1}, {"target": "/secret/path"}, {"error": "RAW_ERROR"},
+                       {"content": "RAW_BODY"}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                mod.validate_effects({"effects": [effect | change]})
+        for bad in ({"effects": [effect] * 41}, {"effects": [], "raw": "RAW_BODY"}, {"effects": None}):
+            with self.assertRaises(ValueError):
+                mod.validate_effects(bad)
+
     def test_export_helper_runs_real_entry_validation_and_reduces_synthetic_export_only(self):
         import contextlib
         import io
@@ -204,6 +219,8 @@ class FakeDocker:
                 code = self.worker_exit
                 stdout = json.dumps(self.status_mutation({"schema": 1, "role": role, "ok": code == 0,
                                                           "exit_code": code, "stage": "finished" if code == 0 else "preflight"}))
+            elif "effect_summary" in command[-1]:
+                stdout = json.dumps({"effects": []})
             else:
                 stdout = json.dumps(self.export)
         else:
@@ -355,7 +372,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(diagnostic.stat().st_mode & 0o777, 0o600)
         self.assertFalse((self.out / "candidate.json").exists())
         self.assertNotIn("UNTRUSTED_REVIEW", str(failure.exception))
-        self.assertEqual((stdout.getvalue(), stderr.getvalue()), ("", ""))
+        self.assertEqual([json.loads(line) for line in stdout.getvalue().splitlines()],
+                         [{"phase": "writer", "effects": []}, {"phase": "reviewer", "effects": []}])
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertNotIn("UNTRUSTED_REVIEW", stdout.getvalue())
         self.audit_gate.assert_called_once()
         self.assertEqual(self.collect.call_count, 2)
         self.assertEqual(self.docker.resources, {})
