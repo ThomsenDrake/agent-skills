@@ -6,7 +6,7 @@ compatibility: Skills reference Cursor harness paths (~/.cursor/plugins, Task to
 
 # pstack
 
-Forked from https://github.com/cursor/plugins/tree/main/pstack (v0.15.26, MIT, Lauren Tan).
+Forked from https://github.com/cursor/plugins/tree/main/pstack (v0.15.28, MIT, Lauren Tan).
 
 > "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence."
 
