@@ -27,7 +27,7 @@ Installation paths and commands vary by agent. This repository intentionally doe
 
 GitHub Actions runs pinned Mistral Vibe CLI with Mistral Large 4 to propose semantic updates after the upstream sync. A daily reconciliation at 14:35 UTC and manual dispatch cover missed or failed runs.
 
-The updater compares old upstream, new upstream, and the accepted Hermes adaptation. It preserves Hermes-specific behavior, runs protected checks, and obtains a fresh same-model review before maintaining one update PR. Merges remain manual. Installed Hermes profiles are never changed automatically.
+The updater compares old upstream, new upstream, and the accepted Hermes adaptation. One isolated Vibe writer proposes the edits. Protected tests must pass before it maintains one update PR. Human review owns semantic acceptance. Merges remain manual. Installed Hermes profiles are never changed automatically.
 
 Only existing Markdown edits are eligible. Structural changes, executable changes, invalid paths, or unsupported scope stop for human review. The writer cannot change tests, workflows, the accepted checkpoint, or publishing policy.
 

@@ -1,4 +1,4 @@
-"""Secret-isolated, two-context Docker/Vibe adaptation; never applies or publishes."""
+"""One isolated Vibe writer. Protected checks and human review own acceptance."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -183,7 +183,7 @@ def _task(role, plan, envelope, destination):
     mappings = [{"source_path": source, **{name: root + "/" + (source if "upstream" in name else bots.get(source, source))
                                           for name, root in paths.items()}} for source in plan["changed_paths"]]
     task = {"role": role, "model": MODEL, "paths": paths, "allowed_paths": plan["allowed_paths"],
-            "changed_sources": plan["changed_paths"], "maps": mappings, "audit_path": "/out/audit.json",
+            "changed_sources": plan["changed_paths"], "maps": mappings,
             "updates": [{key: update[key] for key in ("path", "before_sha256", "after_sha256")}
                         for update in envelope.get("updates", [])]}
     (destination / "task.txt").write_text((POLICY / (role + ".md")).read_text(encoding="utf-8")
@@ -268,67 +268,12 @@ def _phase(role, snapshots, policy, receipts, report=None, *, progress=lambda de
         owned.cleanup()
 
 
-def _retain_review_rejection(out: Path, report: dict, plan: dict, code: str) -> None:
-    """Write untrusted human-readable data, never a candidate or verification input.
-
-    The closed review projection contains only passed (bool/null), the three
-    string lists (0..64 entries, each <=4000 characters), summary (<=4000), and
-    source_dispositions (<=64 exact source_path/status/reason records). Sources
-    must occur in the controller's changed_paths; statuses are updated or
-    already-present, reasons are <=4000 characters, and duplicates are dropped.
-    Invalid fields become null/empty; invalid disposition records are dropped.
-    Unknown keys are never copied. The complete serialized diagnostic is capped
-    at 128 KiB; an oversized diagnostic is not written.
-    """
-    _require(type(code) is str and code in control.AUDIT_REJECTION_CODES, "invalid audit rejection code")
-    review = {"passed": report.get("passed") if type(report.get("passed")) is bool else None}
-    for name in ("security_concerns", "logic_errors", "suggestions"):
-        value = report.get(name)
-        review[name] = value if (type(value) is list and len(value) <= 64
-                                and all(type(item) is str and len(item) <= 4000 for item in value)) else []
-    summary = report.get("summary")
-    review["summary"] = summary if type(summary) is str and len(summary) <= 4000 else ""
-    review["source_dispositions"] = []
-    dispositions, seen = report.get("source_dispositions"), set()
-    expected = set(plan["changed_paths"])
-    if type(dispositions) is list and len(dispositions) <= 64:
-        for entry in dispositions:
-            if (type(entry) is dict and set(entry) == {"source_path", "status", "reason"}
-                    and type(entry["source_path"]) is str and entry["source_path"] in expected
-                    and entry["source_path"] not in seen
-                    and type(entry["status"]) is str and entry["status"] in ("updated", "already-present")
-                    and type(entry["reason"]) is str and len(entry["reason"]) <= 4000):
-                review["source_dispositions"].append({name: entry[name] for name in ("source_path", "status", "reason")})
-                seen.add(entry["source_path"])
-    data = json.dumps({"schema": 1, "mode": "fixture", "failure": "audit-rejection", "code": code,
-                       "review": review}, sort_keys=True, allow_nan=False).encode("utf-8")
-    _require(len(data) <= 128 * 1024, "review rejection diagnostic exceeded bound")
-    _require(out == out.resolve(), "unsafe artifact destination")
-    out.mkdir(mode=0o700)
-    temporary, created, completed = out / ".review-rejection.json.tmp", False, False
-    try:
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        created = True
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, out / "review-rejection.json")
-        completed = True
-    finally:
-        if created:
-            temporary.unlink(missing_ok=True)
-        if not completed:
-            out.rmdir()
 
 
 def adapt(repo: Path, wrapper: dict, out: Path) -> dict:
-    """Return a raw reviewed packet; success writes ONLY out/candidate.json.
+    """Write a schema-2 writer packet, never an approval or semantic verdict.
 
-    Only a fixture AuditError may retain out/review-rejection.json, bounded
-    untrusted data for human inspection, while still rejecting the adaptation.
-    out must be new and outside repo. No apply(), checkpoint, Git write or publication.
-    Docker and provider failures emit only a trusted stage and exception class.
+    out must be new and outside repo. No apply(), Git write, or publication.
     """
     stage = "preflight"
     def phase_progress(detail):
@@ -349,9 +294,8 @@ def adapt(repo: Path, wrapper: dict, out: Path) -> dict:
         _require(plan == protocol.plan(repo) and not plan["noop"] and not plan["blocked_reasons"], "plan is blocked or stale")
         with tempfile.TemporaryDirectory(prefix=".pstack-adapt-", dir=out.parent) as directory:
             root = Path(directory)
-            snapshots, receipts, report = root / "snapshots", root / "receipts", root / "report"
+            snapshots, receipts = root / "snapshots", root / "receipts"
             receipts.mkdir(mode=0o700)
-            report.mkdir(mode=0o700)
             protocol.materialize(repo, plan, snapshots)
             _task("writer", plan, {}, root / "writer-policy")
             stage = "writer"
@@ -362,30 +306,13 @@ def adapt(repo: Path, wrapper: dict, out: Path) -> dict:
             for update in envelope["updates"]:
                 before = protocol._git(repo, "show", f"{plan['base_commit']}:{protocol.ADAPTED}/{update['path']}")
                 control.validate_text_update(update["path"], before.decode("utf-8"), update["content"])
-            _task("reviewer", plan, envelope, root / "reviewer-policy")
-            stage = "reviewer"
-            reviewer_receipt, reviewer_run = _phase("reviewer", snapshots, root / "reviewer-policy", receipts, report,
-                                                    progress=phase_progress)
-            stage = "reviewer.candidate"
-            _require(protocol.collect(repo, plan, snapshots / "candidate") == envelope, "candidate changed during review")
-            stage = "reviewer.outputs"
-            _require({path.name for path in report.iterdir()} == {"audit.json"}, "unexpected reviewer output")
-            stage = "reviewer.audit.json"
-            report_data = control.read_json(report / "audit.json", maximum=128 * 1024)
-            stage = "reviewer.audit"
-            try:
-                audit = control.validate_audit(report_data, plan, envelope)
-            except control.AuditError as exc:
-                stage = "reviewer.audit." + exc.code
-                if wrapper["mode"] == "fixture":
-                    try:
-                        _retain_review_rejection(out, report_data, plan, exc.code)
-                    except Exception:
-                        pass  # Optional evidence must never replace or weaken the original rejection.
-                raise
-            payload = {"schema": 1, "plan": wrapper, "candidate": envelope, "audit": audit,
-                       "receipts": {"writer": writer_receipt, "reviewer": reviewer_receipt},
-                       "runs": {"writer": writer_run, "reviewer": reviewer_run}}
+            payload = {"schema": 2, "plan": wrapper, "candidate": envelope,
+                       "receipts": {"writer": writer_receipt}, "runs": {"writer": writer_run}}
+            control.packet_candidate(wrapper, payload)
+            if wrapper["mode"] == "fixture":
+                expected = control.FIXTURE_PATH.removeprefix("skills/pstack/")
+                _require(any(update["path"] == expected and control.FIXTURE_MARKER in update["content"]
+                             for update in envelope["updates"]), "writer did not preserve the fixture rule")
         stage = "artifact"
         out.mkdir(mode=0o700)
         temporary = out / ".candidate.json.tmp"

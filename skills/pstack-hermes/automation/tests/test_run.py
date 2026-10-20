@@ -97,9 +97,10 @@ class ContainerTests(unittest.TestCase):
             self.assertIn(required, joined)
         self.assertNotIn("GH_TOKEN", joined)
         self.assertNotIn("--privileged", writer)
-        reviewer = run.worker_command(role="reviewer", report_dir=Path("/fixture/report"), **args)
-        self.assertNotIn("dst=/work/candidate", " ".join(reviewer))
-        self.assertIn("dst=/out", " ".join(reviewer))
+        for role, report_dir in (("reviewer", Path("/fixture/report")),
+                                 ("reviewer", None), ("writer", Path("/fixture/report"))):
+            with self.subTest(role=role, report_dir=report_dir), self.assertRaises(ValueError):
+                run.worker_command(role=role, report_dir=report_dir, **args)
         with self.assertRaises(ValueError):
             run.worker_command(role="writer", **(args | {"uid": 0}))
         with self.assertRaises(ValueError):
@@ -169,40 +170,266 @@ class PlanCliTests(unittest.TestCase):
 
 
 class PacketTests(unittest.TestCase):
-    def test_artifact_cannot_change_the_protected_plan_or_drop_evidence_roles(self):
-        run = controller(self)
-        self.assertTrue(callable(getattr(run, "packet_candidate", None)), "missing artifact provenance binding")
-        import copy
+    def setUp(self):
+        import hashlib
+        self.control = controller(self)
         plan = {"schema": 1, "changed_paths": ["unslop/SKILL.md"], "base_commit": "a" * 40,
                 "base_source_commit": "b" * 40, "base_source_tree": "c" * 40,
                 "source_commit": "a" * 40, "source_tree": "d" * 40, "adaptation_tree": "e" * 40}
-        wrapper = {"schema": 1, "mode": "reconcile", "checkout_ref": "a" * 40, "plan": plan, "publication": {}}
-        envelope = {key: plan[key] for key in ("schema", "base_commit", "base_source_commit", "base_source_tree",
-                                              "source_commit", "source_tree", "adaptation_tree")}
-        envelope["updates"] = [{"path": "unslop/SKILL.md"}]
-        audit = {"passed": True, "security_concerns": [], "logic_errors": [], "suggestions": [],
-                 "summary": "The inspected rule is represented in the edited target.",
-                 "source_dispositions": [{"source_path": "unslop/SKILL.md", "status": "updated",
-                                          "reason": "The edited target implements the source rule."}]}
-        packet = {"schema": 1, "plan": wrapper, "candidate": envelope, "audit": audit,
-                  "receipts": {"writer": {}, "reviewer": {}}, "runs": {"writer": {}, "reviewer": {}}}
-        self.assertEqual(run.packet_candidate(wrapper, packet), envelope)
-        for mutation in ("plan", "candidate", "receipts", "runs", "schema", "extra", "audit"):
-            changed = copy.deepcopy(packet)
-            if mutation == "plan":
-                changed["plan"]["mode"] = "fixture"
-            elif mutation == "candidate":
-                changed["candidate"]["base_commit"] = "f" * 40
-            elif mutation in ("receipts", "runs"):
-                del changed[mutation]["reviewer"]
-            elif mutation == "schema":
-                changed[mutation] = True
-            elif mutation == "extra":
-                changed[mutation] = "unexpected"
+        self.wrapper = {"schema": 1, "mode": "reconcile", "checkout_ref": "a" * 40,
+                        "plan": plan, "publication": {}}
+        self.envelope = {key: plan[key] for key in ("schema", "base_commit", "base_source_commit", "base_source_tree",
+                                                   "source_commit", "source_tree", "adaptation_tree")}
+        self.before = "---\nname: unslop\ndescription: Remove unnecessary text.\n---\nOld rule.\n"
+        after = self.before.replace("Old rule.", "New rule.")
+        self.envelope["updates"] = [{"path": "unslop/SKILL.md", "content": after,
+                                     "before_sha256": hashlib.sha256(self.before.encode()).hexdigest(),
+                                     "after_sha256": hashlib.sha256(after.encode()).hexdigest()}]
+        self.packet = {"schema": 2, "plan": self.wrapper, "candidate": self.envelope,
+                       "receipts": {"writer": {}}, "runs": {"writer": {}}}
+
+    def stage_evidence(self):
+        import engine
+        self.wrapper["plan"]["noop"] = False
+        self.packet["receipts"]["writer"] = {
+            "request_count": 1, "upstream_request_count": 1, "successful_2xx": 1,
+            "total_request_bytes": 100, "max_request_bytes": 262144, "max_total_request_bytes": 1500000,
+            "model_ids_submitted": [engine.MODEL], "errors": {}, "status": "closed",
+            "started_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:01+00:00",
+            "elapsed_seconds": 1, "deadline_seconds": 1200}
+        self.packet["runs"]["writer"] = {
+            "bindings": dict(engine.BINDINGS), "cost_usd": 0.01,
+            "usage": {"input_tokens": 10, "output_tokens": 5, "cached_input_tokens": 0, "total_tokens": 15}}
+        return {"contract_tests": True, "updater_tests": True, "helper_tests": True, "helper_typecheck": True,
+                "native": {"cli_passed": True, "inference_performed": False,
+                           "loaded_skills": 55, "loaded_support_files": 62}}
+
+    def test_schema_two_accepts_only_writer_evidence(self):
+        import copy
+        before = copy.deepcopy(self.packet)
+        self.assertIs(self.control.packet_candidate(self.wrapper, self.packet), self.envelope)
+        self.assertEqual(self.packet, before)
+
+    def test_legacy_mixed_missing_or_extra_evidence_is_rejected(self):
+        import copy
+        for schema in (1, True, "2", 2.0):
+            with self.subTest(schema=schema), self.assertRaises(ValueError):
+                self.control.packet_candidate(self.wrapper, self.packet | {"schema": schema})
+        legacy = copy.deepcopy(self.packet)
+        legacy["schema"] = 1
+        legacy["audit"] = {}
+        for key in ("receipts", "runs"):
+            legacy[key]["reviewer"] = {}
+        with self.assertRaises(ValueError):
+            self.control.packet_candidate(self.wrapper, legacy)
+        for key in self.packet:
+            with self.subTest(missing=key), self.assertRaises(ValueError):
+                self.control.packet_candidate(self.wrapper, {k: v for k, v in self.packet.items() if k != key})
+        for key in ("audit", "reviewer", "unexpected"):
+            with self.subTest(extra=key), self.assertRaises(ValueError):
+                self.control.packet_candidate(self.wrapper, self.packet | {key: {}})
+        for key in ("receipts", "runs"):
+            for evidence in ({}, {"reviewer": {}}, {"writer": {}, "reviewer": {}},
+                             {"writer": {}, "extra": {}}, None, []):
+                with self.subTest(key=key, evidence=evidence), self.assertRaises(ValueError):
+                    self.control.packet_candidate(self.wrapper, self.packet | {key: evidence})
+
+    def test_artifact_cannot_change_the_protected_plan_or_source_bindings(self):
+        import copy
+        changed = copy.deepcopy(self.packet)
+        changed["plan"]["mode"] = "fixture"
+        with self.assertRaises(ValueError):
+            self.control.packet_candidate(self.wrapper, changed)
+        for key in self.envelope:
+            if key == "updates":
+                continue
+            changed = copy.deepcopy(self.packet)
+            changed["candidate"][key] = "f" * 40
+            with self.subTest(binding=key), self.assertRaises(ValueError):
+                self.control.packet_candidate(self.wrapper, changed)
+
+    def test_candidate_envelope_and_updates_have_closed_shapes(self):
+        import copy
+        cases = [None, self.envelope | {"audit": {}}, self.envelope | {"schema": True}]
+        cases += [{k: v for k, v in self.envelope.items() if k != key} for key in self.envelope]
+        update = self.envelope["updates"][0]
+        cases += [self.envelope | {"updates": value} for value in (None, {}, "updates", [None])]
+        cases += [self.envelope | {"updates": [update | {"audit": {}}]}]
+        cases += [self.envelope | {"updates": [{k: v for k, v in update.items() if k != key}]}
+                  for key in update]
+        for envelope in cases:
+            packet = copy.deepcopy(self.packet)
+            packet["candidate"] = envelope
+            with self.subTest(envelope=envelope), self.assertRaises(ValueError):
+                self.control.packet_candidate(self.wrapper, packet)
+
+    def test_verifier_runs_protected_checks_before_emitting_writer_only_artifact(self):
+        from contextlib import redirect_stdout
+        import engine
+        import io
+        import tempfile
+        from unittest import mock
+        checks = self.stage_evidence()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, out = root / "repo", root / "verified"
+            with (mock.patch.object(self.control, "restore_plan", return_value=self.wrapper["plan"]),
+                  mock.patch("protocol.apply") as apply,
+                  mock.patch.object(self.control, "git_text", return_value=self.before),
+                  mock.patch.object(engine, "validate_receipt", wraps=engine.validate_receipt) as receipt,
+                  mock.patch.object(engine, "validate_run", wraps=engine.validate_run) as metrics,
+                  mock.patch.object(self.control, "run_checks", return_value=checks) as protected,
+                  redirect_stdout(io.StringIO())):
+                verified = self.control.verify_command(repo, self.wrapper, self.packet, out)
+            apply.assert_called_once_with(repo, self.envelope)
+            receipt.assert_called_once_with(self.packet["receipts"]["writer"])
+            metrics.assert_called_once_with(self.packet["runs"]["writer"])
+            protected.assert_called_once_with(repo, out)
+            self.assertEqual(set(verified), {"schema", "plan", "candidate", "receipts", "runs", "checks"})
+            self.assertEqual(verified, self.packet | {"checks": checks})
+            self.assertEqual(self.control.read_json(out / "verified.json"), verified)
+
+    def test_publisher_accepts_checked_writer_only_artifact_with_original_probe(self):
+        from contextlib import redirect_stdout
+        import engine
+        import io
+        from unittest import mock
+        checks = self.stage_evidence()
+        verified = self.packet | {"checks": checks}
+        repo = Path("/unused-publication-checkout")
+        with (mock.patch.object(self.control, "restore_plan", return_value=self.wrapper["plan"]),
+              mock.patch.object(self.control, "git_text", return_value=self.before),
+              mock.patch.object(engine, "validate_receipt", wraps=engine.validate_receipt) as receipt,
+              mock.patch.object(engine, "validate_run", wraps=engine.validate_run) as metrics,
+              mock.patch("publish.publish", return_value={"action": "created"}) as publisher,
+              redirect_stdout(io.StringIO())):
+            result = self.control.publish_command(repo, verified, self.control.REPOSITORY)
+        self.assertEqual(result, {"action": "created"})
+        receipt.assert_called_once_with(self.packet["receipts"]["writer"])
+        metrics.assert_called_once_with(self.packet["runs"]["writer"])
+        publisher.assert_called_once_with(repo, self.envelope, self.control.REPOSITORY,
+                                          expected_probe=self.wrapper["publication"])
+
+    def test_publisher_requires_completed_protected_checks_not_writer_claims(self):
+        import copy
+        from unittest import mock
+        checks = self.stage_evidence()
+        invalid = [None, {}, checks | {"audit": {}}]
+        for key in ("contract_tests", "updater_tests", "helper_tests", "helper_typecheck"):
+            for value in (False, None, "true", 1):
+                invalid.append(checks | {key: value})
+            invalid.append({k: v for k, v in checks.items() if k != key})
+        invalid += [checks | {"native": value} for value in (None, {},
+                    checks["native"] | {"cli_passed": False},
+                    checks["native"] | {"loaded_skills": 54},
+                    checks["native"] | {"inference_performed": True})]
+        with (mock.patch.object(self.control, "restore_plan") as restore,
+              mock.patch("publish.publish") as publisher):
+            for evidence in invalid:
+                verified = copy.deepcopy(self.packet) | {"checks": evidence}
+                with self.subTest(evidence=evidence), self.assertRaisesRegex(ValueError, "protected checks"):
+                    self.control.publish_command(Path("/unused-checkout"), verified, self.control.REPOSITORY)
+            restore.assert_not_called()
+            publisher.assert_not_called()
+        for mutation in ("missing-checks", "audit", "old-schema"):
+            verified = copy.deepcopy(self.packet) | {"checks": checks}
+            if mutation == "missing-checks":
+                del verified["checks"]
+            elif mutation == "audit":
+                verified["audit"] = {}
             else:
-                changed["audit"]["passed"] = False
+                verified["schema"] = 1
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
-                run.packet_candidate(wrapper, changed)
+                self.control.publish_command(Path("/unused-checkout"), verified, self.control.REPOSITORY)
+
+    def test_failed_protected_checks_never_emit_a_verified_artifact(self):
+        import subprocess
+        import tempfile
+        from unittest import mock
+        self.stage_evidence()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, out = root / "repo", root / "verified"
+            with (mock.patch.object(self.control, "restore_plan", return_value=self.wrapper["plan"]),
+                  mock.patch("protocol.apply"),
+                  mock.patch.object(self.control, "git_text", return_value=self.before),
+                  mock.patch.object(self.control, "run_checks", side_effect=subprocess.CalledProcessError(1, "protected")) as protected):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.control.verify_command(repo, self.wrapper, self.packet, out)
+            protected.assert_called_once_with(repo, out)
+            self.assertFalse((out / "verified.json").exists())
+
+    def test_writer_receipt_and_run_are_validated_before_any_effects(self):
+        import copy
+        import tempfile
+        from unittest import mock
+        checks = self.stage_evidence()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, out = root / "repo", root / "verified"
+            with (mock.patch.object(self.control, "restore_plan", return_value=self.wrapper["plan"]),
+                  mock.patch("protocol.apply") as apply,
+                  mock.patch.object(self.control, "run_checks") as protected,
+                  mock.patch("publish.publish") as publisher):
+                for key in ("receipts", "runs"):
+                    packet = copy.deepcopy(self.packet)
+                    packet[key]["writer"] = {}
+                    with self.subTest(evidence=key):
+                        with self.assertRaises(ValueError):
+                            self.control.verify_command(repo, self.wrapper, packet, out)
+                        with self.assertRaises(ValueError):
+                            self.control.publish_command(repo, packet | {"checks": checks}, self.control.REPOSITORY)
+                apply.assert_not_called()
+                protected.assert_not_called()
+                publisher.assert_not_called()
+                self.assertFalse(out.exists())
+
+    def test_empty_adaptation_cannot_verify_or_publish_a_checkpoint(self):
+        from unittest import mock
+        checks = self.stage_evidence()
+        self.packet["candidate"]["updates"] = []
+        with (mock.patch.object(self.control, "restore_plan") as restore,
+              mock.patch("protocol.apply") as apply,
+              mock.patch("publish.publish") as publisher):
+            with self.assertRaisesRegex(ValueError, "manual review"):
+                self.control.verify_command(Path("/unused-checkout"), self.wrapper, self.packet, Path("/unused-output"))
+            with self.assertRaisesRegex(ValueError, "manual review"):
+                self.control.publish_command(Path("/unused-checkout"), self.packet | {"checks": checks}, self.control.REPOSITORY)
+            restore.assert_not_called()
+            apply.assert_not_called()
+            publisher.assert_not_called()
+
+    def test_each_changed_source_requires_its_exact_mapped_edit(self):
+        import copy
+        mappings = (("unslop/SKILL.md", "unslop/SKILL.md"),
+                    ("agents/poteto-agent.md", "bots/poteto-agent/SOUL.md"),
+                    ("agents/comment-sicko.md", "bots/comment-sicko/SOUL.md"))
+        for source, target in mappings:
+            wrapper = copy.deepcopy(self.wrapper)
+            wrapper["plan"]["changed_paths"] = [source]
+            packet = copy.deepcopy(self.packet)
+            packet["plan"] = wrapper
+            update = packet["candidate"]["updates"][0] | {"path": target}
+            packet["candidate"]["updates"] = [update]
+            with self.subTest(source=source):
+                self.assertIs(self.control.packet_candidate(wrapper, packet), packet["candidate"])
+                for updates in ([], [update | {"path": "SKILL.md"}]):
+                    packet["candidate"]["updates"] = updates
+                    with self.subTest(updates=updates), self.assertRaisesRegex(ValueError, "manual review"):
+                        self.control.packet_candidate(wrapper, packet)
+                if source != target:
+                    packet["candidate"]["updates"] = [update | {"path": source}]
+                    with self.assertRaisesRegex(ValueError, "manual review"):
+                        self.control.packet_candidate(wrapper, packet)
+        wrapper = copy.deepcopy(self.wrapper)
+        wrapper["plan"]["changed_paths"].append("agents/poteto-agent.md")
+        packet = copy.deepcopy(self.packet)
+        packet["plan"] = wrapper
+        with self.assertRaisesRegex(ValueError, "manual review"):
+            self.control.packet_candidate(wrapper, packet)
+        packet["candidate"]["updates"].append(packet["candidate"]["updates"][0]
+                                               | {"path": "bots/poteto-agent/SOUL.md"})
+        self.assertIs(self.control.packet_candidate(wrapper, packet), packet["candidate"])
 
 
 class InstallerTests(unittest.TestCase):
@@ -269,6 +496,12 @@ class CheckRunnerTests(unittest.TestCase):
 
 
 class CommandGuardTests(unittest.TestCase):
+    def test_automated_audit_gate_is_removed_not_reported_as_passed(self):
+        run = controller(self)
+        for name in ("AuditError", "AUDIT_REJECTION_CODES", "validate_audit"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(run, name), "automated audit must not remain an acceptance gate")
+
     def test_cli_exposes_real_pipeline_stages(self):
         import subprocess
         import sys
@@ -290,256 +523,6 @@ class CommandGuardTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fixture"):
             run.publish_command(Path("/nonexistent-checkout"), {"plan": {"mode": "fixture"}},
                                 "ThomsenDrake/agent-skills")
-
-
-class AuditTests(unittest.TestCase):
-    def test_review_verdict_is_strict_and_fail_closed(self):
-        run = controller(self)
-        plan = {"changed_paths": ["unslop/SKILL.md"]}
-        def good():
-            return {"passed": True, "security_concerns": [], "logic_errors": [],
-                    "suggestions": [], "summary": "Inspected the semantic delta.",
-                    "source_dispositions": [{"source_path": "unslop/SKILL.md", "status": "updated",
-                                             "reason": "The mapped output preserves the new source rule."}]}
-        envelope = {"updates": [{"path": "unslop/SKILL.md"}]}
-        self.assertEqual(run.validate_audit(good(), plan, envelope), good())
-        for change in ({"passed": False}, {"passed": "true"}, {"security_concerns": ["unsafe"]},
-                       {"logic_errors": ["missing rule"]}, {"suggestions": "not a list"},
-                       {"summary": ""}, {"unknown": True}, {"source_dispositions": None}):
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                run.validate_audit(good() | change, plan, envelope)
-
-    def test_review_disposition_requires_a_real_mapped_edit_or_specific_equivalence(self):
-        run = controller(self)
-        plan = {"changed_paths": ["unslop/SKILL.md"]}
-        base = {"passed": True, "security_concerns": [], "logic_errors": [], "suggestions": [],
-                "summary": "Inspected the specific semantic change."}
-        entry = {"source_path": "unslop/SKILL.md", "status": "updated", "reason": "The new rule is represented here."}
-        with self.assertRaisesRegex(ValueError, "edit"):
-            run.validate_audit(base | {"source_dispositions": [entry]}, plan, {"updates": []})
-        for change in ({"status": "guessed"}, {"reason": "okay"}, {"unknown": 1}):
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                run.validate_audit(base | {"source_dispositions": [entry | change]}, plan,
-                                   {"updates": [{"path": "unslop/SKILL.md"}]})
-        entry["status"] = "already-present"
-        self.assertTrue(run.validate_audit(base | {"source_dispositions": [entry]}, plan, {"updates": []})["passed"])
-
-    def test_review_cannot_omit_a_source_delta(self):
-        run = controller(self)
-        plan = {"changed_paths": ["unslop/SKILL.md"]}
-        report = {"passed": True, "security_concerns": [], "logic_errors": [],
-                  "suggestions": [], "summary": "Inspected the semantic delta.",
-                  "source_dispositions": []}
-        with self.assertRaisesRegex(ValueError, "source"):
-            run.validate_audit(report, plan, {"updates": []})
-
-
-class AuditCodeTests(unittest.TestCase):
-    def setUp(self):
-        self.control = controller(self)
-        self.plan = {"changed_paths": ["unslop/SKILL.md"]}
-        self.envelope = {"updates": [{"path": "unslop/SKILL.md"}]}
-        self.report = {"passed": True, "security_concerns": [], "logic_errors": [], "suggestions": [],
-                       "summary": "Inspected the semantic delta.",
-                       "source_dispositions": [{"source_path": "unslop/SKILL.md", "status": "updated",
-                                                "reason": "The mapped output preserves the new source rule."}]}
-
-    def assert_audit_code(self, report, code, *, plan=None, envelope=None):
-        import copy
-        before = copy.deepcopy(report)
-        with self.assertRaises(ValueError) as caught:
-            self.control.validate_audit(report, self.plan if plan is None else plan,
-                                    self.envelope if envelope is None else envelope)
-        self.assertEqual(getattr(caught.exception, "code", None), code)
-        self.assertIsInstance(caught.exception, self.control.AuditError)
-        self.assertEqual(caught.exception.args, (code,))
-        self.assertEqual(str(caught.exception), code)
-        self.assertEqual(report, before, "rejection must not normalize the report")
-
-    def test_audit_error_has_only_closed_constant_codes(self):
-        self.assertTrue(hasattr(self.control, "AuditError"), "missing coded audit rejection")
-        codes = frozenset({"schema", "verdict", "lists", "blockers", "summary", "source-list",
-                           "source-coverage", "disposition", "mapped-edit", "equivalence"})
-        self.assertEqual(self.control.AUDIT_REJECTION_CODES, codes)
-        self.assertIsInstance(self.control.AUDIT_REJECTION_CODES, frozenset)
-        for code in sorted(codes):
-            with self.subTest(code=code):
-                error = self.control.AuditError(code)
-                self.assertIsInstance(error, ValueError)
-                self.assertEqual(error.code, code)
-                self.assertIs(type(error.code), str)
-                self.assertEqual(error.args, (code,))
-                self.assertEqual(str(error), code)
-                with self.assertRaises(AttributeError):
-                    error.code = "schema"
-                with self.assertRaises(AttributeError):
-                    del error.code
-
-        class NoCoercion:
-            def __str__(self):
-                raise AssertionError("must not stringify invalid codes")
-
-            def __repr__(self):
-                raise AssertionError("must not represent invalid codes")
-
-            def __hash__(self):
-                raise AssertionError("must not hash invalid codes")
-
-        class StringSubclass(str):
-            pass
-
-        raw = "UNTRUSTED_AUDIT_TEXT\n" + "x" * 5000
-        for code in (raw, "unknown", "SCHEMA", " schema", "schema\n", "", None, True, 1,
-                     b"schema", [], {}, NoCoercion(), StringSubclass("schema")):
-            with self.assertRaises(ValueError) as caught:
-                self.control.AuditError(code)
-            self.assertIs(type(caught.exception), ValueError)
-            self.assertEqual(caught.exception.args, ("invalid audit rejection code",))
-            self.assertNotIn("UNTRUSTED_AUDIT_TEXT", str(caught.exception))
-            self.assertNotIn("UNTRUSTED_AUDIT_TEXT", repr(caught.exception))
-
-    def test_audit_schema_code_rejects_wrong_or_unknown_fields(self):
-        for report in (None, [], "UNTRUSTED_AUDIT_TEXT", True,
-                       self.report | {"UNTRUSTED_AUDIT_TEXT": True, "passed": False}):
-            with self.subTest(kind=type(report).__name__):
-                self.assert_audit_code(report, "schema")
-        for key in self.report:
-            with self.subTest(missing=key):
-                self.assert_audit_code({k: v for k, v in self.report.items() if k != key}, "schema")
-
-    def test_audit_verdict_code_requires_literal_true(self):
-        for value in (False, None, 1, 1.0, "true", "True", "UNTRUSTED_AUDIT_TEXT", [], {}):
-            with self.subTest(value=value):
-                self.assert_audit_code(self.report | {"passed": value}, "verdict")
-        self.assertIs(self.control.validate_audit(self.report, self.plan, self.envelope), self.report)
-
-    def test_audit_lists_code_preserves_string_array_limits(self):
-        for key in ("security_concerns", "logic_errors", "suggestions"):
-            for value in (None, {}, "UNTRUSTED_AUDIT_TEXT", [{"finding": "not a string"}], [1],
-                          ["x" * 4001], [""] * 65):
-                with self.subTest(key=key, kind=type(value).__name__):
-                    self.assert_audit_code(self.report | {key: value}, "lists")
-        for value in ([], [""] * 64, ["x" * 4000] * 64):
-            report = self.report | {"suggestions": value}
-            self.assertIs(self.control.validate_audit(report, self.plan, self.envelope), report)
-
-    def test_audit_blockers_code_cannot_accept_nonempty_blocking_lists(self):
-        for key in ("security_concerns", "logic_errors"):
-            for value in (["UNTRUSTED_AUDIT_TEXT"], [""], ["x" * 4000] * 64):
-                with self.subTest(key=key):
-                    self.assert_audit_code(self.report | {key: value}, "blockers")
-
-    def test_audit_summary_code_preserves_text_bounds(self):
-        for value in (None, {}, [], 12, "", "x" * 11, "UNTRUSTED_AUDIT_TEXT" * 250):
-            with self.subTest(kind=type(value).__name__):
-                self.assert_audit_code(self.report | {"summary": value}, "summary")
-        for value in ("x" * 12, "x" * 4000):
-            report = self.report | {"summary": value}
-            self.assertIs(self.control.validate_audit(report, self.plan, self.envelope), report)
-
-    def test_audit_source_list_code_rejects_non_arrays(self):
-        for value in (None, {}, "UNTRUSTED_AUDIT_TEXT", True, 1):
-            with self.subTest(kind=type(value).__name__):
-                self.assert_audit_code(self.report | {"source_dispositions": value}, "source-list")
-
-    def test_audit_source_coverage_code_requires_exact_paths_once(self):
-        entry = self.report["source_dispositions"][0]
-        for value in ([], [entry, entry], [entry | {"source_path": "UNTRUSTED_AUDIT_TEXT"}],
-                      [entry | {"source_path": "/unslop/SKILL.md"}],
-                      [entry | {"source_path": "unslop/../unslop/SKILL.md"}],
-                      [entry | {"source_path": 1}], [{"status": "updated", "reason": "missing path"}],
-                      [None], [entry, entry | {"source_path": "extra/SKILL.md"}]):
-            with self.subTest(entries=len(value)):
-                self.assert_audit_code(self.report | {"source_dispositions": value}, "source-coverage")
-        self.assert_audit_code(self.report, "source-coverage",
-                               plan={"changed_paths": ["unslop/SKILL.md", "other/SKILL.md"]})
-        other = entry | {"source_path": "other/SKILL.md"}
-        report = self.report | {"source_dispositions": [other, entry]}
-        plan = {"changed_paths": ["unslop/SKILL.md", "other/SKILL.md"]}
-        envelope = {"updates": [{"path": path} for path in plan["changed_paths"]]}
-        self.assertIs(self.control.validate_audit(report, plan, envelope), report)
-
-    def test_audit_disposition_code_preserves_exact_fields_status_and_reason(self):
-        entry = self.report["source_dispositions"][0]
-        invalid = [entry | {"status": value} for value in
-                   (None, True, 1, [], {}, "UNTRUSTED_AUDIT_TEXT", "Updated", "updated ")]
-        invalid += [entry | {"reason": value} for value in (None, [], {}, 12, "", "x" * 11, "x" * 4001)]
-        invalid += [entry | {"UNTRUSTED_AUDIT_TEXT": True},
-                    {k: v for k, v in entry.items() if k != "reason"},
-                    {k: v for k, v in entry.items() if k != "status"}]
-        for value in invalid:
-            self.assert_audit_code(self.report | {"source_dispositions": [value]}, "disposition")
-        # Coverage remains complete even with an extra malformed non-path entry.
-        self.assert_audit_code(self.report | {"source_dispositions": [entry, None]}, "disposition")
-        for value in ("x" * 12, "x" * 4000):
-            report = self.report | {"source_dispositions": [entry | {"reason": value}]}
-            self.assertIs(self.control.validate_audit(report, self.plan, self.envelope), report)
-
-    def test_audit_mapped_edit_code_requires_exact_controller_mapping(self):
-        entry = self.report["source_dispositions"][0]
-        for source, target in (("unslop/SKILL.md", "unslop/SKILL.md"),
-                               ("agents/poteto-agent.md", "bots/poteto-agent/SOUL.md"),
-                               ("agents/comment-sicko.md", "bots/comment-sicko/SOUL.md")):
-            with self.subTest(source=source):
-                report = self.report | {"source_dispositions": [entry | {"source_path": source}]}
-                plan = {"changed_paths": [source]}
-                self.assert_audit_code(report, "mapped-edit", plan=plan, envelope={"updates": []})
-                self.assert_audit_code(report, "mapped-edit", plan=plan,
-                                       envelope={"updates": [{"path": "UNTRUSTED_AUDIT_TEXT"}]})
-                envelope = {"updates": [{"path": target}]}
-                self.assertIs(self.control.validate_audit(report, plan, envelope), report)
-                if source != target:
-                    self.assert_audit_code(report, "mapped-edit", plan=plan,
-                                           envelope={"updates": [{"path": source}]})
-
-    def test_audit_equivalence_code_cannot_claim_edited_target_already_present(self):
-        entry = self.report["source_dispositions"][0] | {"status": "already-present"}
-        for source, target in (("unslop/SKILL.md", "unslop/SKILL.md"),
-                               ("agents/poteto-agent.md", "bots/poteto-agent/SOUL.md"),
-                               ("agents/comment-sicko.md", "bots/comment-sicko/SOUL.md")):
-            with self.subTest(source=source):
-                report = self.report | {"source_dispositions": [entry | {"source_path": source}]}
-                plan = {"changed_paths": [source]}
-                self.assert_audit_code(report, "equivalence", plan=plan,
-                                       envelope={"updates": [{"path": target}]})
-                self.assertIs(self.control.validate_audit(report, plan, {"updates": []}), report)
-
-
-class ReviewerContractTests(unittest.TestCase):
-    def test_reviewer_output_contract_states_exact_schema_and_bounds(self):
-        import json
-        text = (AUTOMATION / "reviewer.md").read_text()
-        sample = json.loads(text.split("```json\n", 1)[1].split("```", 1)[0])
-        self.assertEqual(set(sample), {"passed", "security_concerns", "logic_errors", "suggestions",
-                                       "summary", "source_dispositions"})
-        self.assertIs(type(sample["passed"]), bool)
-        self.assertEqual(set(sample["source_dispositions"][0]), {"source_path", "status", "reason"})
-        for required in (
-                "exactly these six fields", "literal JSON boolean", "never a string or number",
-                "`security_concerns`, `logic_errors`, and `suggestions`",
-                "each an array of 0..64 strings, not objects", "Each string is at most 4000 characters",
-                "`summary`: a string of 12..4000 characters",
-                "objects with exactly `source_path`, `status`, and `reason`, and no other fields",
-                "`reason`: a string of 12..4000 characters",
-                "the exact controller-listed changed path, without normalization",
-                "`agents/poteto-agent.md` maps to `bots/poteto-agent/SOUL.md`",
-                "`agents/comment-sicko.md` maps to `bots/comment-sicko/SOUL.md`",
-                "`already-present` with a mapped edit also blocks acceptance"):
-            with self.subTest(required=required):
-                self.assertIn(required, text)
-
-
-    def test_reviewer_must_write_and_read_back_the_report_without_scope_expansion(self):
-        text = (AUTOMATION / "reviewer.md").read_text()
-        for required in ("Write only `/out/audit.json`", "with the native file tools",
-                         "then read back `/out/audit.json` with the native file tools",
-                         "JSON CLI output is not report creation",
-                         "Tool or permission errors do not authorize broader tools, writes, or scope",
-                         "Fail closed without shell workarounds",
-                         "Do not fabricate a tool run", "independent same-model review context",
-                         "not independent model-family evidence"):
-            with self.subTest(required=required):
-                self.assertIn(required, text)
 
 
 if __name__ == "__main__":

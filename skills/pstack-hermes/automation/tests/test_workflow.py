@@ -36,22 +36,15 @@ class BootstrapTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
-    def test_rejected_review_diagnostic_is_fixture_failure_only_and_not_publishable(self):
+    def test_one_writer_then_protected_checks_and_manual_review(self):
         from ruamel.yaml import YAML
         data = YAML(typ="safe").load((ROOT / ".github/workflows/update-pstack-hermes.yml").read_text())
-        uploads = [step for step in data["jobs"]["adapt"]["steps"]
-                   if step.get("name") == "Retain the rejected fixture review as untrusted data"]
-        self.assertEqual(len(uploads), 1, "missing fixture-only review diagnostic")
-        step = uploads[0]
-        self.assertEqual(step["if"], "failure() && needs.plan.outputs.mode == 'fixture'")
-        self.assertNotIn("id", step)
-        self.assertTrue(step["uses"].startswith("actions/upload-artifact@"))
-        self.assertEqual(step["with"]["path"], "${{ runner.temp }}/raw/review-rejection.json")
-        self.assertEqual(step["with"]["if-no-files-found"], "ignore")
-        self.assertEqual(step["with"]["retention-days"], 3)
-        for name in ("verify", "publish"):
-            self.assertNotIn("review-rejection", str(data["jobs"][name]))
+        self.assertNotIn("review-rejection", str(data))
         self.assertIn("needs.verify.result == 'success'", data["jobs"]["publish"]["if"])
+        self.assertIn("fixture", data["jobs"]["publish"]["if"])
+        engine = (PACKAGE / "automation/engine.py").read_text()
+        self.assertNotIn('_phase("reviewer"', engine)
+        self.assertIn('_phase("writer"', engine)
 
     def test_worker_image_and_offline_policy_checks_are_separate_from_secret_use(self):
         from ruamel.yaml import YAML
@@ -127,13 +120,12 @@ class PromptTests(unittest.TestCase):
         self.assertIn("read back the candidate", writer)
         self.assertIn("already represents the delta", writer)
 
-    def test_reviewer_contract_is_independent_and_fail_closed(self):
-        path = PACKAGE / "automation/reviewer.md"
-        self.assertTrue(path.is_file(), "missing independent review contract")
-        text = path.read_text()
-        for required in ("independent", "audit.json", '"passed"', '"security_concerns"',
-                         '"logic_errors"', '"source_dispositions"', "untrusted data", "Do not edit", "same-model"):
-            self.assertIn(required, text)
+    def test_semantic_acceptance_is_explicitly_human_not_a_fabricated_audit(self):
+        self.assertFalse((PACKAGE / "automation/reviewer.md").exists())
+        text = (PACKAGE / "automation/README.md").read_text()
+        self.assertIn("Human review owns semantic acceptance", text)
+        self.assertIn("schema 2", text)
+        self.assertNotIn("fresh AI review", text)
 
     def test_writer_prompt_separates_runtime_tools_from_output_contract(self):
         path = PACKAGE / "automation/writer.md"

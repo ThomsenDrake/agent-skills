@@ -115,7 +115,7 @@ jobs:
           TMPDIR=/tmp VIBE_HOME=/tmp/vibe-unit LANG=C.UTF-8
           VIBE_TEST_DISABLE_KEYRING=1 PYTHONDONTWRITEBYTECODE=1
           python -I -m unittest discover -s /policy/tests -p test_vibe_entry.py -v
-      - name: Adapt and independently review in restricted containers
+      - name: Adapt with one isolated Vibe writer
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           PSTACK_VIBE_MODEL: ${{ vars.PSTACK_VIBE_MODEL }}
@@ -127,14 +127,6 @@ jobs:
           path: ${{ runner.temp }}/raw/candidate.json
           if-no-files-found: error
           retention-days: 7
-      - name: Retain the rejected fixture review as untrusted data
-        if: failure() && needs.plan.outputs.mode == 'fixture'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: pstack-review-rejection-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/raw/review-rejection.json
-          if-no-files-found: ignore
-          retention-days: 3
 
   verify:
     needs: [plan, adapt]

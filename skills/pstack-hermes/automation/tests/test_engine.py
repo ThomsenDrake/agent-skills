@@ -265,8 +265,6 @@ class LifecycleTests(unittest.TestCase):
         self.git = stack.enter_context(mock.patch.object(self.mod.protocol, "_git", return_value=BEFORE.encode()))
         self.text_gate = stack.enter_context(mock.patch.object(self.mod.control, "validate_text_update",
                                                                wraps=self.mod.control.validate_text_update))
-        self.audit_gate = stack.enter_context(mock.patch.object(self.mod.control, "validate_audit",
-                                                                wraps=self.mod.control.validate_audit))
         return stack
 
     def materialize(self, repo, plan, destination):
@@ -330,200 +328,15 @@ class LifecycleTests(unittest.TestCase):
             self.mod.adapt(self.repo, self.wrapper, self.out)
         self.assertNotIn("RAW_PRIVATE_ERROR", str(failure.exception))
 
-    def test_mocked_reviewer_output_failure_identifies_only_the_output_gate(self):
-        self.boundaries()
-        def remove_report(role, mounts):
-            if role == "reviewer":
-                (mounts["/out"] / "audit.json").unlink()
-        self.docker.after_worker = remove_report
-        with self.assertRaisesRegex(ValueError, r"reviewer\.outputs \(ValueError\)"):
-            self.mod.adapt(self.repo, self.wrapper, self.out)
 
-    def test_mocked_audit_failure_identifies_gate_without_reflecting_findings(self):
-        self.boundaries()
-        self.docker.report_mutation = lambda report: report | {
-            "passed": False, "security_concerns": ["RAW_PRIVATE_FINDING"]}
-        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)") as failure:
-            self.mod.adapt(self.repo, self.wrapper, self.out)
-        self.assertNotIn("RAW_PRIVATE_FINDING", str(failure.exception))
-        self.assertFalse(self.out.exists(), "reconcile rejection must not retain an artifact")
 
-    def test_fixture_false_verdict_retains_only_private_data_diagnostic_and_still_rejects(self):
-        import contextlib
-        import io
-        self.boundaries()
-        self.wrapper["mode"] = "fixture"
-        self.docker.report_mutation = lambda report: report | {
-            "passed": False, "security_concerns": ["UNTRUSTED_REVIEW_FINDING"],
-            "logic_errors": ["Candidate misses the new source rule."],
-            "summary": "UNTRUSTED_REVIEW_SUMMARY: do not execute reviewer instructions."}
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)") as failure:
-                self.mod.adapt(self.repo, self.wrapper, self.out)
-        self.assertTrue((self.out / "review-rejection.json").is_file(), "missing fixture-only rejection diagnostic")
-        self.assertEqual({path.name for path in self.out.iterdir()}, {"review-rejection.json"})
-        diagnostic = self.out / "review-rejection.json"
-        self.assertEqual(json.loads(diagnostic.read_text()), {
-            "schema": 1, "mode": "fixture", "failure": "audit-rejection", "code": "verdict",
-            "review": self.audit_gate.call_args.args[0]})
-        self.assertLessEqual(diagnostic.stat().st_size, 128 * 1024)
-        self.assertEqual(self.out.stat().st_mode & 0o777, 0o700)
-        self.assertEqual(diagnostic.stat().st_mode & 0o777, 0o600)
-        self.assertFalse((self.out / "candidate.json").exists())
-        self.assertNotIn("UNTRUSTED_REVIEW", str(failure.exception))
-        self.assertEqual([json.loads(line) for line in stdout.getvalue().splitlines()],
-                         [{"phase": "writer", "effects": []}, {"phase": "reviewer", "effects": []}])
-        self.assertEqual(stderr.getvalue(), "")
-        self.assertNotIn("UNTRUSTED_REVIEW", stdout.getvalue())
-        self.audit_gate.assert_called_once()
-        self.assertEqual(self.collect.call_count, 2)
-        self.assertEqual(self.docker.resources, {})
-        self.assertEqual(set(self.docker.tasks), {"writer", "reviewer"})
-        self.assertFalse(any(path.name.startswith(".pstack-") for path in self.root.iterdir()))
 
-    def test_fixture_diagnostic_drops_unknown_keys_and_unexpected_source_records(self):
-        self.boundaries()
-        self.wrapper["mode"] = "fixture"
-        safe = {"source_path": "alpha/SKILL.md", "status": "updated", "reason": "A bounded source finding."}
-        canary = "RAW_UNKNOWN_REVIEW_CANARY"
-        self.docker.report_mutation = lambda report: report | {
-            "passed": False,
-            **{name: {"raw": canary} for name in ("logs", "session", "config", "provider_response", "receipt", "env")},
-            "source_dispositions": [
-                {"source_path": "../../candidate.json", "status": "updated", "reason": canary},
-                {"source_path": "/out/attacker.json", "status": "updated", "reason": canary},
-                safe | {"unknown": canary}, safe, safe | {"reason": canary}]}
-        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.schema \(AuditError\)") as failure:
-            self.mod.adapt(self.repo, self.wrapper, self.out)
-        data = (self.out / "review-rejection.json").read_text()
-        diagnostic = json.loads(data)
-        self.assertEqual(set(diagnostic), {"schema", "mode", "failure", "code", "review"})
-        self.assertEqual(set(diagnostic["review"]), {
-            "passed", "security_concerns", "logic_errors", "suggestions", "summary", "source_dispositions"})
-        self.assertEqual(diagnostic["review"]["source_dispositions"], [safe])
-        for forbidden in (canary, "NON_SECRET_HOST_TEST_KEY", "NON_SECRET_FORBIDDEN_GH", "RAW_PROVIDER_ERROR",
-                          "../../candidate.json", "/out/attacker.json"):
-            self.assertNotIn(forbidden, data + str(failure.exception))
-        self.assertEqual({path.name for path in self.out.iterdir()}, {"review-rejection.json"})
-        self.audit_gate.assert_called_once()
-        self.assertEqual(self.docker.resources, {})
 
-    def test_fixture_diagnostic_filters_malformed_and_overlong_review_fields(self):
-        self.boundaries()
-        self.wrapper["mode"] = "fixture"
-        canary = "MALFORMED_REVIEW_CANARY"
-        safe = {"source_path": "alpha/SKILL.md", "status": "already-present", "reason": "Reason stays data only."}
-        self.docker.report_mutation = lambda report: report | {
-            "passed": {"raw": canary}, "security_concerns": [canary, {"raw": canary}],
-            "logic_errors": [canary] * 65, "suggestions": [canary + "x" * 4001],
-            "summary": canary + "x" * 4001,
-            "source_dispositions": [None, [canary], safe | {"source_path": [canary]},
-                                    safe | {"status": {"raw": canary}}, safe | {"status": "rejected"},
-                                    safe | {"reason": [canary]}, safe | {"reason": canary + "x" * 4001}, safe]}
-        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)"):
-            self.mod.adapt(self.repo, self.wrapper, self.out)
-        data = (self.out / "review-rejection.json").read_text()
-        self.assertEqual(json.loads(data)["review"], {
-            "passed": None, "security_concerns": [], "logic_errors": [], "suggestions": [],
-            "summary": "", "source_dispositions": [safe]})
-        self.assertNotIn(canary, data)
-        self.assertFalse((self.out / "candidate.json").exists())
-        self.assertEqual(self.docker.resources, {})
 
-    def test_fixture_diagnostic_caps_normalized_serialized_bytes_without_changing_rejection(self):
-        self.boundaries()
-        self.wrapper["mode"] = "fixture"
-        self.docker.report_mutation = lambda report: report | {
-            "passed": False, "security_concerns": ["\u20ac" * 4000] * 9}
-        def compact_report(role, mounts):
-            if role == "reviewer":
-                audit = mounts["/out"] / "audit.json"
-                audit.write_text(json.dumps(json.loads(audit.read_text()), ensure_ascii=False), encoding="utf-8")
-                self.assertLess(audit.stat().st_size, 128 * 1024)
-        self.docker.after_worker = compact_report
-        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)"):
-            self.mod.adapt(self.repo, self.wrapper, self.out)
-        self.audit_gate.assert_called_once()
-        self.assertFalse(self.out.exists(), "serialization expansion must not bypass the diagnostic byte cap")
-        self.assertEqual(self.docker.resources, {})
 
-    def test_fixture_invalid_audit_files_never_produce_diagnostic(self):
-        self.boundaries()
-        self.wrapper["mode"] = "fixture"
-        for attack in ("symlink", "duplicate-json", "non-object", "oversize", "unexpected-file"):
-            def corrupt(role, mounts):
-                if role != "reviewer":
-                    return
-                audit = mounts["/out"] / "audit.json"
-                if attack == "symlink":
-                    audit.unlink()
-                    audit.symlink_to(self.root / "nonexistent")
-                elif attack == "duplicate-json":
-                    audit.write_text('{"passed":false,"passed":true}')
-                elif attack == "non-object":
-                    audit.write_text('["RAW_AUDIT_CANARY"]')
-                elif attack == "oversize":
-                    audit.write_text(json.dumps({"summary": "RAW_AUDIT_CANARY" * (128 * 1024)}))
-                else:
-                    (audit.parent / "unexpected.json").write_text("RAW_AUDIT_CANARY")
-            self.docker.after_worker = corrupt
-            with self.subTest(attack=attack), self.assertRaises(ValueError) as failure:
-                self.mod.adapt(self.repo, self.wrapper, self.out)
-            self.assertNotIn("RAW_AUDIT_CANARY", str(failure.exception))
-            self.assertFalse(self.out.exists())
-            self.assertEqual(self.docker.resources, {})
-        self.audit_gate.assert_not_called()
 
-    def test_fixture_existing_or_redirected_destination_is_never_overwritten(self):
-        self.boundaries()
-        self.wrapper["mode"] = "fixture"
-        self.docker.report_mutation = lambda report: report | {"passed": False}
-        protected = self.root / "protected"
-        protected.mkdir()
-        canary = protected / "review-rejection.json"
-        canary.write_text("HOSTILE_DESTINATION_MUST_SURVIVE")
-        for attack in ("directory", "symlink"):
-            output = self.root / ("late-" + attack)
-            def occupy(role, mounts):
-                if role == "reviewer":
-                    if attack == "symlink":
-                        output.symlink_to(protected, target_is_directory=True)
-                    else:
-                        output.mkdir()
-                        (output / "review-rejection.json").write_text("HOSTILE_DESTINATION_MUST_SURVIVE")
-            self.docker.after_worker = occupy
-            with self.subTest(attack=attack), self.assertRaisesRegex(
-                    ValueError, r"reviewer\.audit\.verdict \(AuditError\)"):
-                self.mod.adapt(self.repo, self.wrapper, output)
-            self.assertEqual((output / "review-rejection.json").read_text(), "HOSTILE_DESTINATION_MUST_SURVIVE")
-            self.assertEqual(canary.read_text(), "HOSTILE_DESTINATION_MUST_SURVIVE")
-            self.assertEqual({path.name for path in output.iterdir()}, {"review-rejection.json"})
-        self.assertFalse(self.out.exists())
-        self.assertEqual(self.docker.resources, {})
 
-    def test_fixture_diagnostic_write_failures_keep_original_rejection_and_remove_partial_data(self):
-        self.boundaries()
-        self.wrapper["mode"] = "fixture"
-        self.docker.report_mutation = lambda report: report | {"passed": False}
-        for operation in ("fsync", "replace"):
-            with self.subTest(operation=operation), mock.patch.object(
-                    self.mod.os, operation, side_effect=OSError("RAW_WRITE_FAILURE_MUST_NOT_ESCAPE")):
-                with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.verdict \(AuditError\)") as failure:
-                    self.mod.adapt(self.repo, self.wrapper, self.out)
-            self.assertNotIn("RAW_WRITE_FAILURE", str(failure.exception))
-            self.assertFalse(self.out.exists(), "failed diagnostic writes must leave no partial artifact")
-            self.assertEqual(self.docker.resources, {})
-            self.assertFalse(any(path.name.startswith(".pstack-") for path in self.root.iterdir()))
 
-    def test_mocked_blocking_audit_reports_only_closed_rejection_code(self):
-        self.boundaries()
-        self.docker.report_mutation = lambda report: report | {
-            "security_concerns": ["RAW_PRIVATE_FINDING"]}
-        with self.assertRaisesRegex(ValueError, r"reviewer\.audit\.blockers \(AuditError\)") as failure:
-            self.mod.adapt(self.repo, self.wrapper, self.out)
-        self.assertNotIn("RAW_PRIVATE_FINDING", str(failure.exception))
-        self.assertFalse(self.out.exists())
 
     def test_mocked_worker_status_cannot_substitute_booleans_for_schema_and_exit_integers(self):
         self.boundaries()
@@ -555,10 +368,12 @@ class LifecycleTests(unittest.TestCase):
     def test_task_maps_both_agents_without_writer_prose_or_extra_discovery_files(self):
         plan = self.plan | {"changed_paths": ["agents/poteto-agent.md", "agents/comment-sicko.md"]}
         destination = self.root / "policy"
-        self.mod._task("reviewer", plan, {"updates": [{"path": "bots/poteto-agent/SOUL.md",
+        self.mod._task("writer", plan, {"updates": [{"path": "bots/poteto-agent/SOUL.md",
                        "before_sha256": "1" * 64, "after_sha256": "2" * 64, "content": "WRITER_PROSE_NOT_AUTHORITY"}]},
                        destination)
         task = (destination / "task.txt").read_text()
+        self.assertNotIn("audit_path", task)
+        self.assertNotIn("/out/audit.json", task)
         parsed = json.loads(task.split("Controller task JSON:\n", 1)[1])
         self.assertEqual(len(parsed["maps"]), 2)
         for mapping, bot in zip(parsed["maps"], ("poteto-agent", "comment-sicko")):
@@ -634,7 +449,6 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.mod.adapt(self.repo, self.wrapper, self.out)
         self.assertEqual(set(self.docker.tasks), {"writer"})
-        self.audit_gate.assert_not_called()
         self.assertFalse(self.out.exists())
         self.assertEqual(self.docker.resources, {})
 
@@ -648,56 +462,15 @@ class LifecycleTests(unittest.TestCase):
             self.assertFalse(self.out.exists())
             self.assertEqual(self.docker.resources, {})
 
-    def test_mocked_review_rejects_findings_missing_source_extra_fields_and_oversize(self):
-        self.boundaries()
-        for mutation in ({"passed": False}, {"security_concerns": ["unsafe"]}, {"source_dispositions": []},
-                         {"extra": "unknown"}, {"summary": "x" * (128 * 1024)}):
-            self.docker.report_mutation = lambda report: report | mutation
-            with self.subTest(mutation=list(mutation)), self.assertRaises(ValueError):
-                self.mod.adapt(self.repo, self.wrapper, self.out)
-            self.assertFalse(self.out.exists())
-            self.assertEqual(self.docker.resources, {})
 
-    def test_mocked_review_cannot_add_files_directories_or_redirect_the_audit(self):
-        self.boundaries()
-        for attack in ("file", "directory", "symlink", "duplicate-json"):
-            def corrupt(role, mounts):
-                if role != "reviewer":
-                    return
-                audit = mounts["/out"] / "audit.json"
-                if attack == "file":
-                    (audit.parent / "extra.txt").write_text("extra")
-                elif attack == "directory":
-                    (audit.parent / "extra").mkdir()
-                elif attack == "symlink":
-                    audit.unlink()
-                    audit.symlink_to(self.root / "nonexistent")
-                else:
-                    audit.write_text('{"passed":true,"passed":true}')
-            self.docker.after_worker = corrupt
-            with self.subTest(attack=attack), self.assertRaises(ValueError):
-                self.mod.adapt(self.repo, self.wrapper, self.out)
-            self.assertFalse(self.out.exists())
-            self.assertEqual(self.docker.resources, {})
 
-    def test_mocked_post_review_candidate_mutation_is_detected_by_second_collect(self):
-        self.boundaries()
-        def mutate(role, mounts):
-            if role == "reviewer":
-                (mounts["/work"] / "candidate/alpha/SKILL.md").write_text(AFTER + "late mutation\n")
-        self.docker.after_worker = mutate
-        with self.assertRaises(ValueError):
-            self.mod.adapt(self.repo, self.wrapper, self.out)
-        self.assertEqual(self.collect.call_count, 2)
-        self.assertFalse(self.out.exists())
-        self.assertEqual(self.docker.resources, {})
 
     def test_mocked_tmpfs_state_has_a_networkless_keeper_until_after_export_helper(self):
         self.boundaries()
         self.mod.adapt(self.repo, self.wrapper, self.out)
         calls = [args for args, _ in self.docker.calls]
         keepers = [args for args in calls if "--detach" in args]
-        self.assertEqual(len(keepers), 2, "local-driver tmpfs would otherwise disappear when worker exits")
+        self.assertEqual(len(keepers), 1, "the writer state must survive until export validation")
         for keeper in keepers:
             joined = " ".join(keeper)
             self.assertIn("--network none", joined)
@@ -712,68 +485,21 @@ class LifecycleTests(unittest.TestCase):
             self.assertTrue(any(self.mod.EXPORT_HELPER in args for args in between))
         self.assertEqual(self.docker.resources, {})
 
-    def test_mocked_docker_two_contexts_emit_only_reviewed_data_after_all_gates(self):
+    def test_writer_only_packet_has_no_automated_review_verdict(self):
         self.boundaries()
+        def forbid_second_model(role, mounts):
+            self.assertEqual(role, "writer", "only one Vibe writer may run")
+        self.docker.after_worker = forbid_second_model
         payload = self.mod.adapt(self.repo, self.wrapper, self.out)
-        self.assertEqual(json.loads((self.out / "candidate.json").read_text()), payload)
-        self.assertEqual({p.name for p in self.out.iterdir()}, {"candidate.json"})
-        self.assertEqual(set(payload), {"schema", "plan", "candidate", "audit", "receipts", "runs"})
-        self.assertEqual(payload["plan"], self.wrapper)
-        self.assertEqual(payload["candidate"]["updates"][0]["content"], AFTER)
-        self.assertEqual(payload["runs"], {"writer": metrics(), "reviewer": metrics()})
-        self.assertEqual(payload["receipts"], {"writer": receipt(), "reviewer": receipt()})
-        self.assertEqual(self.collect.call_count, 2)
-        self.text_gate.assert_called_once_with("alpha/SKILL.md", BEFORE, AFTER)
-        self.audit_gate.assert_called_once()
-        self.assertIn("show", self.git.call_args.args)
-        self.assertIn("a" * 40 + ":skills/pstack-hermes/alpha/SKILL.md", self.git.call_args.args)
-        self.assertEqual(self.docker.resources, {}, "all uniquely-owned Docker resources must be removed")
-        self.assertFalse(any(path.name.startswith(".pstack-") for path in self.root.iterdir()))
-        for role, task in self.docker.tasks.items():
-            self.assertIn("/work/old-upstream/alpha/SKILL.md", task)
-            self.assertIn("/work/new-upstream/alpha/SKILL.md", task)
-            self.assertIn("/work/current-hermes/alpha/SKILL.md", task)
-            self.assertIn("/work/candidate/alpha/SKILL.md", task)
-            self.assertNotIn("NON_SECRET_HOST_TEST_KEY", task)
-        calls = [args for args, _kwargs in self.docker.calls]
-        workers = [args for args in calls if "--role" in args]
-        self.assertEqual([args[-1] for args in workers], ["writer", "reviewer"])
-        volumes = [next(value for value in args if value.startswith("type=volume")) for args in workers]
-        self.assertNotEqual(*volumes)
-        for volume in volumes:
-            self.assertIn("volume-nocopy", volume, "image /state ownership must not overwrite host-UID tmpfs options")
-        gateways = [args for args in calls if args[1:3] == ["container", "create"]]
-        self.assertEqual(len(gateways), 2)
-        for args, kwargs in self.docker.calls:
-            self.assertNotIn("NON_SECRET_HOST_TEST_KEY", " ".join(args))
-            self.assertNotIn("GH_TOKEN", kwargs["env"])
-            self.assertEqual("MISTRAL_API_KEY" in kwargs["env"], args in gateways)
-        for args in gateways:
-            joined = " ".join(args)
-            for required in ("--env MISTRAL_API_KEY", "--read-only", "--cap-drop ALL", "no-new-privileges",
-                             "--memory 512m", "--cpus 1", "--pids-limit 64", "--network-alias model-gateway",
-                             "--max-requests 40", "--max-request-bytes 262144",
-                             "--max-total-request-bytes 1500000", "--max-response-bytes 16777216",
-                             "--deadline-seconds 1200", "dst=/policy/model_gateway.py,readonly"):
-                self.assertIn(required, joined)
-            self.assertNotIn("--publish", args)
-            self.assertNotIn("/work", self.docker.mounts(args))
-        internal = [args for args in calls if args[1:3] == ["network", "create"] and "--internal" in args]
-        external = [args for args in calls if args[1:3] == ["network", "create"] and "--internal" not in args]
-        self.assertEqual(len(internal), 2)
-        self.assertEqual(len(external), 2)
-        helpers = [args for args in calls if self.mod.EXPORT_HELPER in args]
-        for args in helpers:
-            joined = " ".join(args)
-            for required in ("--network none", "--read-only", "dst=/state,readonly", "validate_export", "read_export"):
-                self.assertIn(required, joined)
-            self.assertNotIn("--env", args)
-        created_volumes = [args for args in calls if args[1:3] == ["volume", "create"]]
-        self.assertEqual(len(created_volumes), 2)
-        for args in created_volumes:
-            self.assertIn("type=tmpfs", args)
-            self.assertIn("device=tmpfs", args)
-            self.assertIn(f"o=size=128m,uid={os.getuid()},gid={os.getgid()},mode=0700", args)
+        self.assertEqual(payload["schema"], 2)
+        self.assertEqual(set(payload), {"schema", "plan", "candidate", "receipts", "runs"})
+        self.assertEqual(set(payload["receipts"]), {"writer"})
+        self.assertEqual(set(payload["runs"]), {"writer"})
+        self.assertEqual(set(self.docker.tasks), {"writer"})
+        self.assertNotIn("audit", payload)
+        self.assertEqual(self.collect.call_count, 1)
+        self.assertEqual(self.docker.resources, {})
+
 
 
 if __name__ == "__main__":

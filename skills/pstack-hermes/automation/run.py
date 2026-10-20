@@ -79,10 +79,8 @@ def make_fixture(repo: Path) -> str:
 def worker_command(*, name: str, network: str, policy: Path, snapshots: Path,
                    state_volume: str, role: str, uid: int, gid: int,
                    report_dir: Path | None = None) -> list[str]:
-    if role not in ("writer", "reviewer") or uid <= 0 or gid <= 0:
-        raise ValueError("worker must be a bounded non-root role")
-    if (role == "reviewer") != (report_dir is not None):
-        raise ValueError("reviewer requires its own report directory")
+    if role != "writer" or report_dir is not None or uid <= 0 or gid <= 0:
+        raise ValueError("worker must be a bounded non-root writer without a report mount")
     for path in (policy, snapshots, report_dir):
         if path is not None and (not path.is_absolute() or any(c in str(path) for c in ",\n\r")):
             raise ValueError("invalid controller mount path")
@@ -94,10 +92,7 @@ def worker_command(*, name: str, network: str, policy: Path, snapshots: Path,
             "--mount", f"type=bind,src={snapshots},dst=/work,readonly",
             "--mount", f"type=volume,src={state_volume},dst=/state",
             "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777"]
-    if role == "writer":
-        args.extend(["--mount", f"type=bind,src={snapshots / 'candidate'},dst=/work/candidate"])
-    else:
-        args.extend(["--mount", f"type=bind,src={report_dir},dst=/out"])
+    args.extend(["--mount", f"type=bind,src={snapshots / 'candidate'},dst=/work/candidate"])
     # Strip Python-image build metadata too; do not inherit an image's ENV.
     args.extend(["--entrypoint", "/usr/bin/env", "pstack-vibe:verified", "-i",
                  "HOME=/state/home", "VIBE_HOME=/state/vibe", "TMPDIR=/state/tmp",
@@ -106,63 +101,6 @@ def worker_command(*, name: str, network: str, policy: Path, snapshots: Path,
                  "MISTRAL_API_KEY=gateway-only-not-a-provider-key",
                  "python", "-I", "/policy/vibe_entry.py", "--role", role])
     return args
-
-
-AUDIT_REJECTION_CODES = frozenset({
-    "schema", "verdict", "lists", "blockers", "summary", "source-list",
-    "source-coverage", "disposition", "mapped-edit", "equivalence",
-})
-
-
-class AuditError(ValueError):
-    """A bounded controller-defined rejection, never reviewer-supplied text."""
-
-    def __init__(self, code: str):
-        if type(code) is not str or code not in AUDIT_REJECTION_CODES:
-            raise ValueError("invalid audit rejection code")
-        self._code = code
-        super().__init__(code)
-
-    @property
-    def code(self) -> str:
-        return self._code
-
-
-def validate_audit(report: dict, plan: dict, envelope: dict) -> dict:
-    required = {"passed", "security_concerns", "logic_errors", "suggestions", "summary", "source_dispositions"}
-    if not isinstance(report, dict) or set(report) != required:
-        raise AuditError("schema")
-    if report["passed"] is not True:
-        raise AuditError("verdict")
-    for key in ("security_concerns", "logic_errors", "suggestions"):
-        value = report[key]
-        if not isinstance(value, list) or len(value) > 64 or any(not isinstance(x, str) or len(x) > 4000 for x in value):
-            raise AuditError("lists")
-    if report["security_concerns"] or report["logic_errors"]:
-        raise AuditError("blockers")
-    if not isinstance(report["summary"], str) or not 12 <= len(report["summary"]) <= 4000:
-        raise AuditError("summary")
-    dispositions = report["source_dispositions"]
-    if not isinstance(dispositions, list):
-        raise AuditError("source-list")
-    seen = [entry["source_path"] for entry in dispositions
-            if isinstance(entry, dict) and isinstance(entry.get("source_path"), str)]
-    if sorted(seen) != sorted(plan["changed_paths"]):
-        raise AuditError("source-coverage")
-    edited = {item["path"] for item in envelope["updates"]}
-    agent_paths = {"agents/poteto-agent.md": "bots/poteto-agent/SOUL.md",
-                   "agents/comment-sicko.md": "bots/comment-sicko/SOUL.md"}
-    for entry in dispositions:
-        if (not isinstance(entry, dict) or set(entry) != {"source_path", "status", "reason"}
-                or entry["status"] not in ("updated", "already-present")
-                or not isinstance(entry["reason"], str) or not 12 <= len(entry["reason"]) <= 4000):
-            raise AuditError("disposition")
-        target = agent_paths.get(entry["source_path"], entry["source_path"])
-        if entry["status"] == "updated" and target not in edited:
-            raise AuditError("mapped-edit")
-        if entry["status"] == "already-present" and target in edited:
-            raise AuditError("equivalence")
-    return report
 
 
 POLICY = Path(__file__).resolve().parent
@@ -234,21 +172,31 @@ def restore_plan(repo: Path, wrapper: dict) -> dict:
 
 
 def packet_candidate(wrapper: dict, packet: dict) -> dict:
-    required = {"schema", "plan", "candidate", "audit", "receipts", "runs"}
+    required = {"schema", "plan", "candidate", "receipts", "runs"}
     if (type(packet) is not dict or set(packet) != required or type(packet["schema"]) is not int
-            or packet["schema"] != 1 or packet["plan"] != wrapper):
+            or packet["schema"] != 2 or packet["plan"] != wrapper):
         raise ValueError("candidate artifact differs from the protected plan or schema")
     for key in ("receipts", "runs"):
-        if type(packet[key]) is not dict or set(packet[key]) != {"writer", "reviewer"}:
-            raise ValueError("candidate artifact lacks separate writer and reviewer evidence")
+        if type(packet[key]) is not dict or set(packet[key]) != {"writer"}:
+            raise ValueError("candidate artifact requires writer-only evidence")
     envelope = packet["candidate"]
-    if type(envelope) is not dict:
-        raise ValueError("candidate artifact lacks a data envelope")
-    for key in ("schema", "base_commit", "base_source_commit", "base_source_tree",
-                "source_commit", "source_tree", "adaptation_tree"):
-        if envelope.get(key) != wrapper["plan"][key]:
+    bindings = ("schema", "base_commit", "base_source_commit", "base_source_tree",
+                "source_commit", "source_tree", "adaptation_tree")
+    if (type(envelope) is not dict or set(envelope) != {*bindings, "updates"}
+            or type(envelope["schema"]) is not int or envelope["schema"] != 1):
+        raise ValueError("candidate artifact lacks a closed schema-1 data envelope")
+    for key in bindings:
+        if envelope[key] != wrapper["plan"][key]:
             raise ValueError("candidate artifact changed a protected source binding")
-    validate_audit(packet["audit"], wrapper["plan"], envelope)
+    if type(envelope["updates"]) is not list or any(
+            type(update) is not dict or set(update) != {"path", "content", "before_sha256", "after_sha256"}
+            or type(update["path"]) is not str for update in envelope["updates"]):
+        raise ValueError("candidate artifact has invalid update shapes")
+    edited = {update["path"] for update in envelope["updates"]}
+    bot_paths = {"agents/poteto-agent.md": "bots/poteto-agent/SOUL.md",
+                 "agents/comment-sicko.md": "bots/comment-sicko/SOUL.md"}
+    if not edited or any(bot_paths.get(path, path) not in edited for path in wrapper["plan"]["changed_paths"]):
+        raise ValueError("manual review required: candidate must edit every changed source counterpart")
     return envelope
 
 
@@ -314,9 +262,8 @@ def verify_command(repo: Path, wrapper: dict, packet: dict, out: Path) -> dict:
         raise ValueError("verification needs a changed source and a new external output directory")
     import engine
     import protocol
-    for role in ("writer", "reviewer"):
-        engine.validate_receipt(packet["receipts"][role])
-        engine.validate_run(packet["runs"][role])
+    engine.validate_receipt(packet["receipts"]["writer"])
+    engine.validate_run(packet["runs"]["writer"])
     # This is a disposable checkout. Only a successful normalized artifact can
     # leave this job; the accepted checkpoint remains on main until human merge.
     protocol.apply(repo, envelope)
@@ -339,7 +286,7 @@ def verify_command(repo: Path, wrapper: dict, packet: dict, out: Path) -> dict:
 def publish_command(repo: Path, verified: dict, repository: str) -> dict:
     if (type(verified.get("plan")) is not dict or verified["plan"].get("mode") != "reconcile"):
         raise ValueError("fixture or invalid artifacts cannot publish")
-    if repository != REPOSITORY or set(verified) != {"schema", "plan", "candidate", "audit", "receipts", "runs", "checks"}:
+    if repository != REPOSITORY or set(verified) != {"schema", "plan", "candidate", "receipts", "runs", "checks"}:
         raise ValueError("invalid verifier publication artifact")
     checks = verified["checks"]
     if (type(checks) is not dict or set(checks) != {"contract_tests", "updater_tests", "helper_tests", "helper_typecheck", "native"}
@@ -353,9 +300,8 @@ def publish_command(repo: Path, verified: dict, repository: str) -> dict:
     current = restore_plan(repo, wrapper)
     import engine
     import publish as publisher
-    for role in ("writer", "reviewer"):
-        engine.validate_receipt(packet["receipts"][role])
-        engine.validate_run(packet["runs"][role])
+    engine.validate_receipt(packet["receipts"]["writer"])
+    engine.validate_run(packet["runs"]["writer"])
     for update in envelope["updates"]:
         before = git_text(repo, "show", current["base_commit"] + ":skills/pstack-hermes/" + update["path"])
         validate_text_update(update["path"], before, update["content"])
