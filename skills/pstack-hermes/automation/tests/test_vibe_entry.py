@@ -139,7 +139,7 @@ class ExportTests(unittest.TestCase):
             (("config", "models", MODEL, "name"), "mistral-large-latest"),
             (("config", "models", MODEL, "provider"), "generic"),
             (("config", "models", MODEL, "thinking"), "off"),
-            (("config", "models", MODEL, "thinking"), "high"),
+            (("config", "models", MODEL, "thinking"), "low"),
             (("config", "compaction_model", "thinking"), "off"),
             (("config", "vision_model", "thinking"), "off"),
             (("config", "providers", 0, "backend"), "generic"),
@@ -595,7 +595,7 @@ with patch.object(mistral_adapter.httpx, "AsyncClient", side_effect=offline_clie
         [], [], adapter, ProviderCredentialSnapshot(token="offline-dummy", headers={}, revision="offline"),
         adapter.active_model, stream=False))
 assert len(requests) == 1
-assert requests[0].get("reasoning_effort") == "none", "thinking must explicitly disable provider reasoning"
+assert requests[0].get("reasoning_effort") == "high", "thinking must use high provider reasoning"
 assert requests[0]["max_tokens"] == 150000, "Unified forwards its session cap; the gateway separately clamps to 8192"
 assert requests[0]["model"] == "mistral-large-4"
 assert not connections

@@ -43,7 +43,7 @@ There is no automated AI reviewer or model-generated approval. Old audited packe
 
 The writer gets one attempt: 40 turns, 150,000 cumulative tokens, an estimated $2 limit, and a 900-second Vibe deadline. The gateway separately caps attempts, request/response bytes, generation, and elapsed time. Each completion is at most 8,192 tokens. These client limits are not a provider-enforced account billing ceiling. Use a provider project budget for that ceiling.
 
-Pinned Unified Vibe maps `thinking="low"` to explicit Mistral `reasoning_effort="none"`; `off` omits it. An offline SDK assertion checks the mapping. The gateway independently sets `none` and clamps completion length. Unknown aliases, fallback warnings, unavailable models, limited/failed exports, and zero usage stop the run.
+Vibe uses `thinking="high"` for the active, compaction, and vision model routes. The pinned Unified SDK emits Mistral `reasoning_effort="high"`; an offline request assertion proves it. The gateway independently enforces `high` and clamps completion length. Mistral Large 4 rejects `none`. Unknown aliases, fallback warnings, unavailable models, limited/failed exports, and zero usage stop the run.
 
 Successful pending proposals are deduplicated. Failed adaptations retry on later reconciliation. Disable the workflow to stop repeated spending while repairing a failure.
 

@@ -542,16 +542,16 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(stderr, b"")
             self.assertEqual(json.loads(receipt.read_text())["status"], "closed")
 
-    def test_gateway_explicitly_disables_reasoning_independent_of_worker_settings(self):
+    def test_gateway_pins_high_reasoning_independent_of_worker_settings(self):
         with LocalUpstream() as upstream:
             with running_gateway(connection_factory=upstream.connection_factory) as (server, _):
                 for options in ({}, {"reasoning_effort": "high"}, {"reasoning_effort": None},
-                                {"reasoning_effort": "none"}):
+                                {"reasoning_effort": "none"}, {"reasoning_effort": "low"}):
                     with self.subTest(options=options):
                         status, _, _ = request(server, body=json.dumps({"model": MODEL, **options}).encode())
                         self.assertEqual(status, 200)
                         outgoing = json.loads(upstream.requests[-1][2])
-                        self.assertEqual(outgoing.get("reasoning_effort"), "none")
+                        self.assertEqual(outgoing.get("reasoning_effort"), "high")
                         self.assertEqual(outgoing["max_tokens"], 8192)
                         self.assertEqual(outgoing["n"], 1)
 
