@@ -23,6 +23,18 @@ Omi is the first skill in this collection. Additional skills will be added as th
 
 Installation paths and commands vary by agent. This repository intentionally does not assume a specific client.
 
+## Automatic pstack-hermes updates
+
+GitHub Actions runs pinned Mistral Vibe CLI with Mistral Large 4 and `high` reasoning to propose semantic updates after the upstream sync. A daily reconciliation at 14:35 UTC and manual dispatch cover missed or failed runs.
+
+The updater compares old upstream, new upstream, and the accepted Hermes adaptation. One isolated Vibe writer proposes the edits. Protected tests must pass before it maintains one update PR. Human review owns semantic acceptance. Merges remain manual. Installed Hermes profiles are never changed automatically.
+
+Only existing Markdown edits are eligible. Structural changes, executable changes, invalid paths, or unsupported scope stop for human review. The writer cannot change tests, workflows, the accepted checkpoint, or publishing policy.
+
+The Mistral credential stays in an internal model gateway. The AI container receives no real provider key or GitHub token. A separate publisher receives repository write permission only after verification.
+
+Configuration, limits, recovery, and the disposable hosted smoke are documented in [the updater guide](./skills/pstack-hermes/automation/README.md). The workflows activate from the default branch after this setup is merged.
+
 ## Repository structure
 
 ```text

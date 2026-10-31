@@ -5,6 +5,11 @@ on:
     # daily 14:00 UTC = 9am ET (EST) / 10am ET (EDT); GitHub cron is UTC-only
     - cron: '0 14 * * *'
   workflow_dispatch:
+    inputs:
+      verify_updater:
+        description: Run only the disposable Vibe updater fixture; do not sync upstream
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -15,8 +20,20 @@ concurrency:
 
 jobs:
   sync:
+    if: github.event_name != 'workflow_dispatch' || !inputs.verify_updater
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Sync pstack from upstream
         run: bash scripts/update-pstack.sh
+
+  verify-updater:
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_updater
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/update-pstack-hermes.yml
+    with:
+      mode: fixture
+    secrets:
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}

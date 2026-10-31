@@ -1,0 +1,198 @@
+name: Update pstack-hermes with Vibe
+
+on:
+  workflow_run:
+    workflows: [Update pstack from cursor/plugins]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '35 14 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Reconcile accepted source or exercise a disposable semantic fixture
+        type: choice
+        options: [reconcile, fixture]
+        default: reconcile
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        default: reconcile
+    secrets:
+      MISTRAL_API_KEY:
+        required: false
+
+permissions: {}
+
+concurrency:
+  group: pstack-hermes-updater
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  POLICY: skills/pstack-hermes/automation
+
+jobs:
+  plan:
+    if: >-
+      github.repository == 'ThomsenDrake/agent-skills' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_branch == github.event.repository.default_branch))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      needs_update: ${{ steps.plan.outputs.needs_update }}
+      checkout_ref: ${{ steps.plan.outputs.checkout_ref }}
+      mode: ${{ steps.plan.outputs.mode }}
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.mode == 'fixture' && github.sha || github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.14'
+      - name: Detect and bind the exact source delta
+        id: plan
+        env:
+          MODE: ${{ inputs.mode || 'reconcile' }}
+          GH_TOKEN: ${{ github.token }}
+        run: python "$POLICY/run.py" plan --repo . --mode "$MODE" --repository "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/plan"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: artifact
+        if: steps.plan.outputs.needs_update == 'true'
+        with:
+          name: pstack-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/plan/plan.json
+          if-no-files-found: error
+          retention-days: 7
+
+  adapt:
+    needs: plan
+    if: needs.plan.outputs.needs_update == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.plan.outputs.checkout_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.plan.outputs.artifact_id }}
+          path: ${{ runner.temp }}/accepted-plan
+          merge-multiple: true
+      - name: Build the pinned file-only Vibe worker
+        run: docker build --pull --platform linux/amd64 --file "$POLICY/Dockerfile.worker" --tag pstack-vibe:verified "$POLICY"
+      - name: Run released Vibe policy checks offline
+        run: >-
+          docker run --rm --network none --read-only --cap-drop ALL
+          --security-opt no-new-privileges --pids-limit 128 --memory 2g --cpus 2
+          --user "$(id -u):$(id -g)"
+          --tmpfs /tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777
+          --mount "type=bind,src=$PWD/$POLICY,dst=/policy,readonly"
+          --entrypoint /usr/bin/env pstack-vibe:verified -i
+          PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp/unit-home
+          TMPDIR=/tmp VIBE_HOME=/tmp/vibe-unit LANG=C.UTF-8
+          VIBE_TEST_DISABLE_KEYRING=1 PYTHONDONTWRITEBYTECODE=1
+          python -I -m unittest discover -s /policy/tests -p test_vibe_entry.py -v
+      - name: Adapt with one isolated Vibe writer
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          PSTACK_VIBE_MODEL: ${{ vars.PSTACK_VIBE_MODEL }}
+        run: python "$POLICY/run.py" adapt --repo . --plan "$RUNNER_TEMP/accepted-plan/plan.json" --out "$RUNNER_TEMP/raw"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: artifact
+        with:
+          name: pstack-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/raw/candidate.json
+          if-no-files-found: error
+          retention-days: 7
+
+  verify:
+    needs: [plan, adapt]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.plan.outputs.checkout_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.14'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.3'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.plan.outputs.artifact_id }}
+          path: ${{ runner.temp }}/accepted-plan
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.adapt.outputs.artifact_id }}
+          path: ${{ runner.temp }}/candidate
+          merge-multiple: true
+      - name: Install pinned verification runtimes without model credentials
+        run: python "$POLICY/run.py" install-verifier
+      - name: Reconstruct and verify with protected policy
+        run: python "$POLICY/run.py" verify --repo . --plan "$RUNNER_TEMP/accepted-plan/plan.json" --candidate "$RUNNER_TEMP/candidate/candidate.json" --out "$RUNNER_TEMP/verified"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        id: artifact
+        with:
+          name: pstack-verified-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/verified/verified.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [plan, adapt, verify]
+    if: needs.verify.result == 'success' && needs.plan.outputs.mode != 'fixture'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.plan.outputs.checkout_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact_id }}
+          path: ${{ runner.temp }}/verified
+          merge-multiple: true
+      - name: Publish one reviewable PR and read back its exact head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python "$POLICY/run.py" publish --repo . --verified "$RUNNER_TEMP/verified/verified.json" --repository "$GITHUB_REPOSITORY"
