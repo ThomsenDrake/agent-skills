@@ -220,7 +220,7 @@ def install_verifier(root: Path, *, runner=None) -> Path:
     runner([sys.executable, "-m", "venv", str(root)], env=environment, check=True, timeout=120)
     runner([str(interpreter), "-m", "pip", "--isolated", "install", "--no-cache-dir",
             "--disable-pip-version-check", "--timeout", "30", "--retries", "2",
-            "git+https://github.com/NousResearch/hermes-agent.git@" + pins["hermes_commit"]],
+            "--editable", "git+https://github.com/NousResearch/hermes-agent.git@" + pins["hermes_commit"] + "#egg=hermes-agent"],
            env=environment, check=True, timeout=900)
     runner([str(interpreter), "-m", "pip", "check"], env=environment, check=True, timeout=60)
     if output := os.environ.get("GITHUB_ENV"):
