@@ -119,6 +119,8 @@ class PromptTests(unittest.TestCase):
         self.assertIn("A report describing a planned edit is not an edit", writer)
         self.assertIn("read back the candidate", writer)
         self.assertIn("already represents the delta", writer)
+        self.assertNotIn("reviewer", agent.lower())
+        self.assertNotIn("/out/audit.json", agent)
 
     def test_semantic_acceptance_is_explicitly_human_not_a_fabricated_audit(self):
         self.assertFalse((PACKAGE / "automation/reviewer.md").exists())

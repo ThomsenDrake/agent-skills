@@ -173,7 +173,7 @@ class _Owned:
         _require(not failed, "Docker cleanup failed")
 
 
-def _task(role, plan, envelope, destination):
+def _task(plan, destination):
     destination.mkdir(mode=0o700)
     for name in ("vibe_entry.py", "vibe-config.toml", "vibe-agent.toml"):
         shutil.copyfile(POLICY / name, destination / name)
@@ -182,11 +182,9 @@ def _task(role, plan, envelope, destination):
             "agents/comment-sicko.md": "bots/comment-sicko/SOUL.md"}
     mappings = [{"source_path": source, **{name: root + "/" + (source if "upstream" in name else bots.get(source, source))
                                           for name, root in paths.items()}} for source in plan["changed_paths"]]
-    task = {"role": role, "model": MODEL, "paths": paths, "allowed_paths": plan["allowed_paths"],
-            "changed_sources": plan["changed_paths"], "maps": mappings,
-            "updates": [{key: update[key] for key in ("path", "before_sha256", "after_sha256")}
-                        for update in envelope.get("updates", [])]}
-    (destination / "task.txt").write_text((POLICY / (role + ".md")).read_text(encoding="utf-8")
+    task = {"role": "writer", "model": MODEL, "paths": paths, "allowed_paths": plan["allowed_paths"],
+            "changed_sources": plan["changed_paths"], "maps": mappings}
+    (destination / "task.txt").write_text((POLICY / "writer.md").read_text(encoding="utf-8")
                                           + "\n\nController task JSON:\n" + json.dumps(task, sort_keys=True), encoding="utf-8")
 
 
@@ -297,7 +295,7 @@ def adapt(repo: Path, wrapper: dict, out: Path) -> dict:
             snapshots, receipts = root / "snapshots", root / "receipts"
             receipts.mkdir(mode=0o700)
             protocol.materialize(repo, plan, snapshots)
-            _task("writer", plan, {}, root / "writer-policy")
+            _task(plan, root / "writer-policy")
             stage = "writer"
             writer_receipt, writer_run = _phase("writer", snapshots, root / "writer-policy", receipts,
                                                 progress=phase_progress)

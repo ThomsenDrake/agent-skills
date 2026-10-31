@@ -368,9 +368,7 @@ class LifecycleTests(unittest.TestCase):
     def test_task_maps_both_agents_without_writer_prose_or_extra_discovery_files(self):
         plan = self.plan | {"changed_paths": ["agents/poteto-agent.md", "agents/comment-sicko.md"]}
         destination = self.root / "policy"
-        self.mod._task("writer", plan, {"updates": [{"path": "bots/poteto-agent/SOUL.md",
-                       "before_sha256": "1" * 64, "after_sha256": "2" * 64, "content": "WRITER_PROSE_NOT_AUTHORITY"}]},
-                       destination)
+        self.mod._task(plan, destination)
         task = (destination / "task.txt").read_text()
         self.assertNotIn("audit_path", task)
         self.assertNotIn("/out/audit.json", task)
@@ -382,7 +380,8 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(mapping["current-hermes"], f"/work/current-hermes/bots/{bot}/SOUL.md")
             self.assertEqual(mapping["candidate"], f"/work/candidate/bots/{bot}/SOUL.md")
         self.assertNotIn("WRITER_PROSE_NOT_AUTHORITY", task)
-        self.assertEqual(set(parsed["updates"][0]), {"path", "before_sha256", "after_sha256"})
+        self.assertEqual(parsed["role"], "writer")
+        self.assertNotIn("updates", parsed)
 
     def test_mocked_gateway_health_retries_are_bounded_and_never_start_worker_when_unhealthy(self):
         self.boundaries()

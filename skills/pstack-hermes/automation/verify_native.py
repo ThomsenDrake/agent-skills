@@ -48,7 +48,7 @@ def verify(package: Path, home: Path) -> dict:
         result = json.loads(skill_view(name, preprocess=False))
         if result.get("success") is not True or result.get("content") != (directory / "SKILL.md").read_text():
             raise ValueError("native skill loading did not preserve the installed document")
-        if Path(result["_source_path"]).resolve() != (directory / "SKILL.md").resolve():
+        if Path(result["skill_dir"]).resolve() != directory.resolve():
             raise ValueError("native skill resolved outside its isolated installation")
 
     support_count = 0
