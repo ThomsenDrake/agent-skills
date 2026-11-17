@@ -10,6 +10,8 @@
 #   Without it the base is origin/HEAD, then origin/main, then origin/master.
 #   origin/HEAD is the remote's default branch, not necessarily the branch PRs
 #   merge into; pass -b when they differ.
+#   PSTACK_TRANSCRIPTS_DIR, when set, is the one transcripts dir LAST_CHAT
+#   searches, in place of the Cursor and Claude Code defaults.
 set -u
 
 base=""
@@ -69,9 +71,20 @@ elif raw=$(gh pr list --author "@me" --state all --limit 1000 \
 fi
 [ -s "$prs" ] || echo "[]" > "$prs"
 
-# Transcripts dir: ~/.cursor/projects/<slugified-repo-path>/agent-transcripts.
-slug=$(printf '%s' "$main_wt" | sed 's#^/##; s#/#-#g')
-transcripts="$HOME/.cursor/projects/$slug/agent-transcripts"
+# Transcripts dirs. PSTACK_TRANSCRIPTS_DIR overrides both defaults. Cursor's is
+# ~/.cursor/projects/<slugified-repo-path>/agent-transcripts. Claude Code keeps
+# one ~/.claude/projects/<slug> per directory a session started in, where the
+# slug turns each character other than a letter or digit into "-", and its
+# transcripts are the *.jsonl files directly in it. Search the main checkout's
+# and each worktree's own.
+claude_slug() { printf '%s' "$1" | sed 's#[^A-Za-z0-9]#-#g'; }
+if [ -n "${PSTACK_TRANSCRIPTS_DIR:-}" ]; then
+	transcripts="$PSTACK_TRANSCRIPTS_DIR"; claude_projects=""
+else
+	slug=$(printf '%s' "$main_wt" | sed 's#^/##; s#/#-#g')
+	transcripts="$HOME/.cursor/projects/$slug/agent-transcripts"
+	claude_projects="$HOME/.claude/projects"
+fi
 now=$(date +%s)
 
 echo "# base: $base"
@@ -111,8 +124,16 @@ git worktree list --porcelain | awk '/^worktree /{print $2}' | while read -r wt;
 	# Most recent chat whose transcript operated in this worktree. Match path
 	# followed by "/" or a quote so glint-482 does not match glint-482-r37.
 	last="-"; last_ts=0
-	if [ -d "$transcripts" ]; then
-		f=$(rg -l -e "${wt}/" -e "${wt}\"" "$transcripts" 2>/dev/null \
+	claude_dirs=()
+	if [ -n "$claude_projects" ]; then
+		for d in "$claude_projects/$(claude_slug "$main_wt")" "$claude_projects/$(claude_slug "$wt")"; do
+			[ -d "$d" ] && claude_dirs+=("$d")
+		done
+	fi
+	if [ -d "$transcripts" ] || [ ${#claude_dirs[@]} -gt 0 ]; then
+		f=$({ [ -d "$transcripts" ] && rg -l -e "${wt}/" -e "${wt}\"" "$transcripts"
+			[ ${#claude_dirs[@]} -gt 0 ] && rg -l --max-depth 1 -g '*.jsonl' \
+				-e "${wt}/" -e "${wt}\"" "${claude_dirs[@]}"; } 2>/dev/null \
 			| xargs stat "${stat_fmt[@]}" 2>/dev/null | sort -rn | head -1)
 		if [ -n "$f" ]; then last_ts=$(echo "$f" | awk '{print $1}')
 			last=$(fmt_day "$last_ts" 2>/dev/null); fi

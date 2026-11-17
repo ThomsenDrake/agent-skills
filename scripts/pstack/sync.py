@@ -35,8 +35,13 @@ UPSTREAM_WEB = f"https://github.com/{UPSTREAM_REPO}"
 # Upstream path prefix -> path under DEST.
 SOURCES = (("pstack/skills", ""), ("pstack/agents", "agents"), ("pstack/LICENSE", "LICENSE"))
 OWNED = {"SKILL.md", "UPSTREAM.json"}
-# Skills that stay Cursor-specific because the platform is the point of the skill.
+# Files that name Cursor on purpose: the index maps pstack's wording to specific agents, and
+# make-bot-ui exists to drive Cursor Automations.
 KEEP_PLATFORM = ("make-bot-ui/",)
+
+
+def exempt(dest_path):
+    return dest_path == "SKILL.md" or dest_path.startswith(KEEP_PLATFORM)
 GENERATOR = "scripts/generate-pstack-harness-trees.mjs"
 SPEC_FIELDS = ("name", "description", "license", "compatibility", "allowed-tools", "metadata")
 BRANCH = "automation/pstack-update"
@@ -121,10 +126,6 @@ def is_text(data):
         return False
 
 
-def exempt(dest_path):
-    return dest_path.startswith(KEEP_PLATFORM)
-
-
 def top_skill(dest_path):
     """The skill folder for a top-level SKILL.md, such as tdd for tdd/SKILL.md."""
     parts = dest_path.split("/")
@@ -185,8 +186,10 @@ def yaml_scalar(raw):
     return raw
 
 
-def normalize_frontmatter(text, folder):
-    """Make a SKILL.md header follow the Agent Skills spec: name is the folder, other fields go under metadata."""
+def normalize_frontmatter(text, folder=None):
+    """Keep the Agent Skills spec fields at the top and move the rest under metadata.
+
+    A skill's name is its folder. A subagent brief (folder None) keeps its own name."""
     match = FRONTMATTER.match(text)
     if not match:
         return text
@@ -201,6 +204,8 @@ def normalize_frontmatter(text, folder):
                 metadata.append(line)
         elif key in SPEC_FIELDS:
             kept.setdefault(key, lines)
+    if folder is None:
+        folder = yaml_scalar(kept.get("name", ["name: "])[0].split(":", 1)[1])
     for key, lines in entries:
         if key not in SPEC_FIELDS and key not in meta_keys:
             value = " ".join([lines[0].split(":", 1)[1]] + [line.strip() for line in lines[1:]])
@@ -222,6 +227,8 @@ def transform(dest_path, data, upstream_paths):
     folder = top_skill(dest_path)
     if folder:
         text = normalize_frontmatter(text, folder)
+    elif dest_path.startswith("agents/") and FRONTMATTER.match(text):
+        text = normalize_frontmatter(text)
     return text.encode("utf-8")
 
 
@@ -434,7 +441,8 @@ def output_problems(job, text, terms):
     if CONFLICT.search(text):
         problems.append("conflict markers remain")
     folder = top_skill(job["path"])
-    if folder and normalize_frontmatter(text, folder) != text:
+    agent = job["path"].startswith("agents/") and FRONTMATTER.match(text)
+    if (folder or agent) and normalize_frontmatter(text, folder) != text:
         problems.append("the frontmatter changed shape: keep the draft's fields and order")
     leftover = new_markers(job["path"], data, job["current"] or job.get("renamed_from"), terms)
     if leftover:
@@ -773,7 +781,7 @@ def publish(repo, artifact, repository):
             gh("pr", "close", str(pr["number"]), "--repo", repository, "--delete-branch",
                "--comment", f"Superseded: the sync landed on main in {sha} with every check passing.")
         return
-    body = render_summary(report, problems) + PR_FOOTER
+    body = render_summary(report, problems) + pr_footer(repository)
     remote = run("git", "ls-remote", "--exit-code", "origin", f"refs/heads/{BRANCH}", cwd=repo, check=False)
     if remote.returncode == 0:
         git(repo, "fetch", "--quiet", "origin", f"+refs/heads/{BRANCH}:refs/remotes/origin/{BRANCH}")
@@ -805,11 +813,12 @@ def publish(repo, artifact, repository):
                  "--body-file", stream.name).strip())
 
 
-PR_FOOTER = f"""
+def pr_footer(repository):
+    return f"""
 
 ### How to finish this update
 
-The daily sync could not land this on its own. Fix each file listed under **Needs review** on this branch, following [`scripts/pstack/NEUTRALIZE.md`](../blob/main/scripts/pstack/NEUTRALIZE.md), then merge. Merging advances `{DEST}/UPSTREAM.json`, so the next run continues from here.
+The daily sync could not land this on its own. Fix each file listed under **Needs review** on this branch, following [`scripts/pstack/NEUTRALIZE.md`](https://github.com/{repository}/blob/main/scripts/pstack/NEUTRALIZE.md), then merge. Merging advances `{DEST}/UPSTREAM.json`, so the next run continues from here.
 
 While this branch has only bot commits, each daily run rebuilds it from `main`. Once you push a commit here, the sync leaves the branch alone until you merge or close the PR.
 """

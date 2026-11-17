@@ -8,7 +8,7 @@
 2. **Name the capability, not the product.** Say what the agent must do, such as "spawn a subagent" or "ask the user". Where an agent may lack the capability, give the fallback once, at the point where the instruction applies.
 3. **Add nothing and remove nothing else.** Don't add rules, gates, features or commentary that upstream doesn't have. The only allowed deletions are statements about Cursor's own catalog or UI that have no neutral meaning, such as which models have a `-fast` slug.
 4. **Match the house style.** Short declarative sentences. Same headings, lists, tables, code blocks and links as upstream. A neutral phrase should be about as long as the Cursor phrase it replaces. Don't define the vocabulary inline in every file. The pstack index (`skills/pstack/SKILL.md`) has the per-agent table.
-5. **Frontmatter.** The sync script sets `name` to the folder name and moves fields outside the Agent Skills spec under `metadata`. Edit only the wording of `description` or `compatibility`, and only to neutralize it.
+5. **Frontmatter.** The sync script sets a skill's `name` to its folder name and moves fields outside the Agent Skills spec under `metadata`, in skills and in the `agents/` briefs. Edit only the wording of `description` or `compatibility`, and a model value under `metadata`, and only to neutralize them. Agents treat `disable-model-invocation` differently once it sits under `metadata`, so a sentence that relies on it says what the skill is meant to do, such as "Only `/setup-pstack` is meant to load from the user's words."
 6. **Never introduce another agent's names.** No Hermes, Claude Code, Codex or other product tool names, paths or commands in the skills. The index is the one place that maps the neutral words to specific agents.
 
 ## Vocabulary
@@ -64,6 +64,7 @@
 | `~/.cursor/projects/<slug>/agent-transcripts/...` | this workspace's session transcripts, where your agent stores them. Keep upstream's rule never to read other workspaces' transcripts. Where a skill parses transcripts, describe the content (user turns, assistant turns, tool calls) and say that formats vary by agent |
 | "the system prompt names the path" | if your agent gives you the path, use it |
 | `https://github.com/cursor/plugins/...` links | keep them. They are attribution and upstream docs |
+| `https://github.com/cursor/plugins/blob/main/pstack/` followed by a file's path, as the public copy of an installed file | `https://github.com/ThomsenDrake/agent-skills/blob/main/skills/pstack/` followed by its path inside the pstack folder |
 
 ### Platform features
 
@@ -76,13 +77,15 @@
 | Bugbot | keep it. It is a GitHub review bot, and its comments are ordinary PR threads |
 | Cursor's built-in `create-skill` skill | your agent's skill-authoring guidance, if it has any, and the [Agent Skills specification](https://agentskills.io/specification) |
 | Cursor's built-in skill with the same name (such as babysit) | another skill with a similar name |
-| Custom Modes, the Agents Window, Plan Mode | your agent's equivalent, if it has one. Drop the sentence if it only points at the product feature |
+| Custom Modes | your agent's persistent mode, if it has one |
+| Plan Mode | your agent's plan mode, if it has one |
+| the Agents Window | drop the sentence if it only points at the product feature |
 | "Cursor" as the product the user runs | your agent |
 | How pstack installs in Cursor or Claude Code | This copy is agent-neutral: put the `pstack` folder where your agent loads skills. Cursor and Claude Code users can also install upstream's native plugin from cursor/plugins |
 
 ### Leave these alone
 
 - `/name` skill commands. They mean "run the skill called name".
-- Shell commands (`git`, `gh`, `bun`, `rg`) and script behavior. In a script that hardcodes one agent's path, accept an environment-variable override and keep the old path as one of the defaults.
+- Shell commands (`git`, `gh`, `bun`, `rg`) and script behavior. In a script that hardcodes one agent's path, accept an environment-variable override and keep the old path as one of the defaults. A script may also check other agents' known default locations.
 - Package names such as `@cursor-skill/...`, and other uses of the word "cursor" that don't mean the product, such as a GraphQL `endCursor` or a text cursor.
 - The `poteto-agent`, `comment-sicko`, `inherit-parent`, `auto` and Bugbot names.
