@@ -10,6 +10,7 @@ Each skill is self-contained and follows the [Agent Skills open standard](https:
 | --- | --- |
 | [`using-omi-api`](./skills/using-omi-api/) | Comprehensive guidance for using Omi across Developer REST, Integration and OAuth, webhooks, MCP, and `omi-cli`, including authentication boundaries, safety, reliability, and known documentation gaps. |
 | [`pstack`](./skills/pstack/) | Fork of [cursor/plugins pstack](https://github.com/cursor/plugins/tree/main/pstack) v0.15.43 (MIT, Lauren Tan). 54 skills for rigorous, parallelizable engineering workflows: `poteto-mode` entry point, `architect`/`arena`/`swarm` design and orchestration, `tdd`, `unslop`, 31 `principle-*` skills, and more. Start with `setup-pstack`, then `poteto-mode`. |
+| [`no-slop-grenade`](./skills/no-slop-grenade/) | Sizes and shapes anything written for other people, such as messages, emails, requests, announcements, docs, slides, forms, PR descriptions and status updates, so it isn't a [slop grenade](https://noslopgrenade.com/). Calibrated on real rewrites and the sender's edits to them: cut to what the reader needs, keep every fact, condition and real uncertainty, and add nothing the sender didn't say. |
 | [`pstack-hermes`](./skills/pstack-hermes/) | Hermes-native adaptation of pstack v0.15.25. The same 54 skills, with Hermes delegation, profile configuration, bot skeletons, and retained Bun helpers. Start with `setup-pstack`, then `poteto-mode`. |
 
 Omi is the first skill in this collection. Additional skills will be added as they are developed and reviewed.
