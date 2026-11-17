@@ -53,6 +53,7 @@
 - It is not loaded automatically. A skill that needs a role's line reads the file. A missing file or line means the skill default.
 - The file has no frontmatter, so drop the `alwaysApply` and `description` lines from its shape. Its comment lines, `# defaults` line, `# budget` line and role lines stay.
 - "It applies to new sessions" becomes "skills read it the next time they need a role".
+- Any other always-applied rule that a skill writes follows the same pattern: a Markdown file under `~/.config/pstack/`, without frontmatter, that skills read when they need it.
 
 ### Paths and installs
 

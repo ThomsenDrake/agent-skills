@@ -7,6 +7,7 @@
   publish    Apply a build's patch to main and rerun the checks. Push to main when everything
              passed, otherwise put the update in one pull request for review.
   check      Run the checks on the working tree against a base ref.
+  ping       Make one small model call to prove the key and model work.
   bootstrap  Replace the synced files with upstream at one commit, transformed but not neutralized.
 
 The checkpoint is skills/pstack/UPSTREAM.json. It advances only with the content it describes.
@@ -854,6 +855,7 @@ def main(argv=None):
     p.add_argument("--repository", required=True)
     p = sub.add_parser("check")
     p.add_argument("--base", default="origin/main")
+    sub.add_parser("ping")
     p = sub.add_parser("bootstrap")
     p.add_argument("--commit", required=True)
     p.add_argument("--upstream")
@@ -868,6 +870,12 @@ def main(argv=None):
             problems = check_tree(repo, args.base, compile_terms())
             print("\n".join(problems) or "no problems")
             return 1 if problems else 0
+        elif args.command == "ping":
+            if not os.environ.get("MISTRAL_API_KEY"):
+                raise SyncError("MISTRAL_API_KEY is not set")
+            model = Model(os.environ["MISTRAL_API_KEY"])
+            reply = model([{"role": "user", "content": "Reply with exactly: ok"}])
+            print(f"{model.model} replied {reply.strip()!r} ({model.prompt_tokens}+{model.completion_tokens} tokens)")
         elif args.command == "bootstrap":
             bootstrap(repo, args.commit, args.upstream)
     except SyncError as error:

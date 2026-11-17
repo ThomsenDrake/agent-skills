@@ -36,6 +36,12 @@ jobs:
       - run: pip install skills-ref==0.1.1
       - name: Test the sync script
         run: python -m unittest discover -s scripts/pstack/tests
+      - name: Prove the model key works
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          PSTACK_MODEL: ${{ vars.PSTACK_MODEL }}
+        run: python scripts/pstack/sync.py ping
       - name: Build the update
         id: build
         env:
