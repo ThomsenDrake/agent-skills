@@ -6,34 +6,96 @@ on:
     - cron: '0 14 * * *'
   workflow_dispatch:
     inputs:
-      verify_updater:
-        description: Run only the disposable Vibe updater fixture; do not sync upstream
+      dry_run:
+        description: Build and check the update, but don't push or open a PR
         type: boolean
         default: false
 
-permissions:
-  contents: write
+permissions: {}
 
+# Dry runs get their own group, so they never replace a queued scheduled run.
 concurrency:
-  group: update-pstack
-  cancel-in-progress: true
+  group: update-pstack-${{ github.ref }}-${{ inputs.dry_run && 'dry' || 'live' }}
+  cancel-in-progress: false
 
 jobs:
-  sync:
-    if: github.event_name != 'workflow_dispatch' || !inputs.verify_updater
-    runs-on: ubuntu-latest
+  # Holds the model key. Read-only: it only produces a patch and a report.
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      status: ${{ steps.build.outputs.status }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Sync pstack from upstream
-        run: bash scripts/update-pstack.sh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - run: pip install --require-hashes -r scripts/pstack/requirements.txt
+      - name: Test the sync script
+        run: python -m unittest discover -s scripts/pstack/tests
+      - name: Prove the model key works
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          PSTACK_MODEL: ${{ vars.PSTACK_MODEL }}
+        run: python scripts/pstack/sync.py ping
+      - name: Build the update
+        id: build
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          PSTACK_MODEL: ${{ vars.PSTACK_MODEL }}
+        run: python scripts/pstack/sync.py build --out "$RUNNER_TEMP/pstack-update"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: steps.build.outputs.status != 'noop'
+        with:
+          name: pstack-update
+          path: ${{ runner.temp }}/pstack-update/
+          if-no-files-found: error
+          retention-days: 14
 
-  verify-updater:
-    if: github.event_name == 'workflow_dispatch' && inputs.verify_updater
+  # Holds the write token, not the model key. Reruns the checks before it trusts the patch.
+  publish:
+    needs: build
+    if: >-
+      needs.build.outputs.status != 'noop' &&
+      github.ref == 'refs/heads/main' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
-    uses: ./.github/workflows/update-pstack-hermes.yml
-    with:
-      mode: fixture
-    secrets:
-      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - run: pip install --require-hashes -r scripts/pstack/requirements.txt
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: pstack-update
+          path: ${{ runner.temp }}/pstack-update
+      - name: Land on main, or update the review PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/pstack/sync.py publish --artifact "$RUNNER_TEMP/pstack-update" --repository "$GITHUB_REPOSITORY"
+
+  # GitHub turns off a public repository's schedules after 60 days without activity, and a quiet
+  # upstream means no sync commits. Re-enabling the workflow on each scheduled run keeps it on.
+  keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/update-pstack.yml/enable"

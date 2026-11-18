@@ -9,9 +9,8 @@ Each skill is self-contained and follows the [Agent Skills open standard](https:
 | Skill | Description |
 | --- | --- |
 | [`using-omi-api`](./skills/using-omi-api/) | Comprehensive guidance for using Omi across Developer REST, Integration and OAuth, webhooks, MCP, and `omi-cli`, including authentication boundaries, safety, reliability, and known documentation gaps. |
-| [`pstack`](./skills/pstack/) | Fork of [cursor/plugins pstack](https://github.com/cursor/plugins/tree/main/pstack) v0.15.43 (MIT, Lauren Tan). 54 skills for rigorous, parallelizable engineering workflows: `poteto-mode` entry point, `architect`/`arena`/`swarm` design and orchestration, `tdd`, `unslop`, 31 `principle-*` skills, and more. Start with `setup-pstack`, then `poteto-mode`. |
+| [`pstack`](./skills/pstack/) | Agent-neutral adaptation of [cursor/plugins pstack](https://github.com/cursor/plugins/tree/main/pstack) v0.15.43 (MIT, Lauren Tan), kept in sync daily. Rigorous, parallelizable engineering workflows: the `poteto-mode` entry point, `architect`/`arena`/`swarm` design and orchestration, `tdd`, `unslop`, the `principle-*` skills, and more. Start with `setup-pstack`, then `poteto-mode`. |
 | [`no-slop-grenade`](./skills/no-slop-grenade/) | Sizes and shapes anything written for other people, such as messages, emails, requests, announcements, docs, slides, forms, PR descriptions and status updates, so it isn't a [slop grenade](https://noslopgrenade.com/). Calibrated on real rewrites and the sender's edits to them: cut to what the reader needs, keep every fact, condition and real uncertainty, and add nothing the sender didn't say. |
-| [`pstack-hermes`](./skills/pstack-hermes/) | Hermes-native adaptation of pstack v0.15.25. The same 54 skills, with Hermes delegation, profile configuration, bot skeletons, and retained Bun helpers. Start with `setup-pstack`, then `poteto-mode`. |
 
 Omi is the first skill in this collection. Additional skills will be added as they are developed and reviewed.
 
@@ -24,17 +23,22 @@ Omi is the first skill in this collection. Additional skills will be added as th
 
 Installation paths and commands vary by agent. This repository intentionally does not assume a specific client.
 
-## Automatic pstack-hermes updates
+## Automatic pstack updates
 
-GitHub Actions runs pinned Mistral Vibe CLI with Mistral Large 4 and `high` reasoning to propose semantic updates after the upstream sync. A daily reconciliation at 14:35 UTC and manual dispatch cover missed or failed runs.
+`.github/workflows/update-pstack.yml` runs daily at 14:00 UTC and on manual dispatch. It compares upstream pstack with the commit in `skills/pstack/UPSTREAM.json` and carries each change into the agent-neutral copy:
 
-The updater compares old upstream, new upstream, and the accepted Hermes adaptation. One isolated Vibe writer proposes the edits. Protected tests must pass before it maintains one update PR. Human review owns semantic acceptance. Merges remain manual. Installed Hermes profiles are never changed automatically.
+- An upstream change that merges cleanly and adds no Cursor-specific text is applied as is.
+- Anything else goes to Mistral Large 4 with the rewrite rules in [`scripts/pstack/NEUTRALIZE.md`](./scripts/pstack/NEUTRALIZE.md). Upstream's own list of Cursor terms is read on every run, so new terms are caught too.
+- The result must pass the checks: the Agent Skills spec, no new Cursor-specific lines, no conflict markers, no broken links.
 
-Only existing Markdown edits are eligible. Structural changes, executable changes, invalid paths, or unsupported scope stop for human review. The writer cannot change tests, workflows, the accepted checkpoint, or publishing policy.
+When everything passes, the update is pushed to `main`. When anything fails, the update goes to one PR from `automation/pstack-update` that lists what needs review. Merging it advances the checkpoint. The build job holds the `MISTRAL_API_KEY` secret and only read access. A separate publish job, without the key, reruns the checks and holds write access.
 
-The Mistral credential stays in an internal model gateway. The AI container receives no real provider key or GitHub token. A separate publisher receives repository write permission only after verification.
+Run it by hand, or check an update without publishing it:
 
-Configuration, limits, recovery, and the disposable hosted smoke are documented in [the updater guide](./skills/pstack-hermes/automation/README.md). The workflows activate from the default branch after this setup is merged.
+```bash
+gh workflow run update-pstack.yml
+gh workflow run update-pstack.yml -f dry_run=true
+```
 
 ## Repository structure
 
@@ -47,7 +51,7 @@ skills/
     └── assets/        # Optional templates and static resources
 ```
 
-`skills/pstack/` is a vendored fork: a meta `SKILL.md` index plus the 54 upstream skills as subdirectories, and agent definitions under `skills/pstack/agents/`.
+`skills/pstack/` is an agent-neutral adaptation of upstream pstack: an index `SKILL.md` that maps pstack's wording to specific agents, upstream's skills as subdirectories, and subagent briefs under `skills/pstack/agents/`. `scripts/pstack/` keeps it in sync.
 
 ## Standards
 
