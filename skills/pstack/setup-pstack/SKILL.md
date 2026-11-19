@@ -17,6 +17,8 @@ Enumerate the models you can pass to a subagent in this session, and the efforts
 
 The default role-to-model mapping is the file shape shown in step 5 below. If `~/.config/pstack/pstack-models.md` already exists, read it and treat its `# budget` line and its role values as the current choices. Otherwise start from those defaults. A line whose role is not in step 5, such as `hardest tasks`, `architect runners`, `reflect tooling`, or `why investigators`, is from a retired role. Drop it.
 
+Older defaults put another Gemini model, then `gemini-4-neon high`, in the panel seat. So in any file, a `gemini-4-neon high` entry, or a `gemini-4-*` entry other than `gemini-4-neon-*`, in a panel role (`arena runners`, `arena cross-judge pool`, `interrogate reviewers`) is an old default. Each one becomes `gemini-4-neon xhigh`. A Gemini 4 Neon entry at any other level is the user's choice and stays. Tell the user which entries you replaced.
+
 A file without the `# defaults: 3` line comes from an older setup. That setup wrote a line for every role, so some of its values are old defaults, not choices. Before step 3, replace these values:
 
 - An `arena cross-judge pool` list of exactly one `claude-fable-*` entry, one `claude-opus-*` entry, and one `gemini-*` entry, in any order, takes the role's step 5 list. Fable and Opus are one vendor, so the Fable entry could judge only where the Opus entry also could.
@@ -33,7 +35,7 @@ Every other value is the user's choice and stays, including an old model in any 
 - `medium — high reasoning`
 - `small — medium reasoning`
 
-**(b) Apply it.** Build the working table from the skill defaults, and on a re-run keep any role you changed by family, list, or alias (`inherit-parent`, `auto`). Families are the ones Phase A of the **arena** skill defines, so Fable is its own family. Each role has a target effort, which is its default's effort moved by the budget. `large` keeps it, `medium` lowers it one step, and `small` lowers it two steps, on the ladder `xhigh` > `high` > `medium` > `low`. No role runs above `xhigh`, and a target at the bottom of the ladder stays there. Most defaults are at `xhigh`, and each budget label names where those land. Set the effort of every real model in the role, panel entries included, to the role's target. The effort is the last token. If the result is not a detected model, use the same family's detected model with the highest effort at or below the target, else mark the role as needing a choice. `inherit-parent` and `auto` do not change. So `medium` turns `claude-opus-5-5 xhigh` into `claude-opus-5-5 high` and `claude-opus-5-5 high` into `claude-opus-5-5 medium`, and `small` turns them into `claude-opus-5-5 medium` and `claude-opus-5-5 low`. Gemini tops out at `high`, so a Gemini entry runs at `high` when its role's target is `xhigh`.
+**(b) Apply it.** Build the working table from the skill defaults, and on a re-run keep any role you changed by family, list, or alias (`inherit-parent`, `auto`). Families are the ones Phase A of the **arena** skill defines, so Fable is its own family. Each role has a target effort, which is its default's effort moved by the budget. `large` keeps it, `medium` lowers it one step, and `small` lowers it two steps, on the ladder `xhigh` > `high` > `medium` > `low`. No role runs above `xhigh`, and a target at the bottom of the ladder stays there. Most defaults are at `xhigh`, and each budget label names where those land. Set the effort of every real model in the role, panel entries included, to the role's target. The effort is the last token. If the result is not a detected model, use the same family's detected model with the highest effort at or below the target, else mark the role as needing a choice. `inherit-parent` and `auto` do not change. So `medium` turns `claude-opus-5-5 xhigh` into `claude-opus-5-5 high` and `claude-opus-5-5 high` into `claude-opus-5-5 medium`, and `small` turns them into `claude-opus-5-5 medium` and `claude-opus-5-5 low`. Gemini 4 Neon runs from `low` to `xhigh`, so its seat runs at `gemini-4-neon xhigh`, its highest effort. A Gemini 4 Neon entry in a panel role takes its own target, `xhigh` moved by the budget, so `large` keeps `gemini-4-neon xhigh`, `medium` writes `gemini-4-neon high`, and `small` writes `gemini-4-neon medium`.
 
 **(c) Show the roles and confirm.** Show every role with its model, marking any real model not in the detected set as needing a choice. Also list each line step 2 dropped. Ask whether to accept as-is or change specific roles, offering the detected models at `xhigh` or below plus `inherit-parent` and `auto` (both mean: this role runs on the parent chat model, which is how users on automatic model selection stay on it) as the options. Prefer a multiple-choice question over free text when your agent supports one. For panel roles (arena runners, interrogate reviewers) the value is a list, and one subagent runs per entry, alias entries included, so the list length sets the count. `arena cross-judge pool` is also a list, but Arena runs one judge. It tries only values from a vendor other than the parent's, in list order, so order it by preference. Fable and the other Claude models are one vendor. An `inherit-parent` or `auto` value never judges. `swarm workers` is the default model for every worker unless a race or comparison assigns another model per arm.
 
@@ -55,10 +57,10 @@ bug-fix: claude-opus-5-5 xhigh
 perf-issue: claude-opus-5-5 xhigh
 hillclimb: claude-opus-5-5 xhigh
 judgment and prose: claude-opus-5-5 xhigh
-arena runners: claude-fable-5-2 high, claude-opus-5-5 high, gemini-4-carbon high
-arena cross-judge pool: claude-opus-5-5 high, gemini-4-carbon high
+arena runners: claude-fable-5-2 high, claude-opus-5-5 high, gemini-4-neon xhigh
+arena cross-judge pool: claude-opus-5-5 high, gemini-4-neon xhigh
 swarm workers: claude-opus-5-5 high
-interrogate reviewers: claude-fable-5-2 high, claude-opus-5-5 high, gemini-4-carbon high
+interrogate reviewers: claude-fable-5-2 high, claude-opus-5-5 high, gemini-4-neon xhigh
 ```
 
 ### 6. Confirm

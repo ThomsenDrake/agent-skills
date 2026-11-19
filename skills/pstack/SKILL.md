@@ -10,7 +10,7 @@ metadata:
 
 # pstack
 
-An agent-neutral adaptation of [cursor/plugins pstack](https://github.com/cursor/plugins/tree/main/pstack) by Lauren Tan (MIT). This copy follows upstream pstack v0.15.43 at commit 2f87c85.
+An agent-neutral adaptation of [cursor/plugins pstack](https://github.com/cursor/plugins/tree/main/pstack) by Lauren Tan (MIT). This copy follows upstream pstack v0.15.45 at commit dd24b67.
 
 > "if you want to go fast, go deep first. pstack helps you write less, but higher quality code. rigorous agent workflows you can parallelize with confidence."
 
