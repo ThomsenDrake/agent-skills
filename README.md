@@ -9,7 +9,7 @@ Each skill is self-contained and follows the [Agent Skills open standard](https:
 | Skill | Description |
 | --- | --- |
 | [`using-omi-api`](./skills/using-omi-api/) | Comprehensive guidance for using Omi across Developer REST, Integration and OAuth, webhooks, MCP, and `omi-cli`, including authentication boundaries, safety, reliability, and known documentation gaps. |
-| [`pstack`](./skills/pstack/) | Agent-neutral adaptation of [cursor/plugins pstack](https://github.com/cursor/plugins/tree/main/pstack) v0.15.45 (MIT, Lauren Tan), kept in sync daily. Rigorous, parallelizable engineering workflows: the `poteto-mode` entry point, `architect`/`arena`/`swarm` design and orchestration, `tdd`, `unslop`, the `principle-*` skills, and more. Start with `setup-pstack`, then `poteto-mode`. |
+| [`pstack`](./skills/pstack/) | Agent-neutral adaptation of [cursor/plugins pstack](https://github.com/cursor/plugins/tree/main/pstack) v0.15.46 (MIT, Lauren Tan), kept in sync daily. Rigorous, parallelizable engineering workflows: the `poteto-mode` entry point, `architect`/`arena`/`swarm` design and orchestration, `tdd`, `unslop`, the `principle-*` skills, and more. Start with `setup-pstack`, then `poteto-mode`. |
 | [`no-slop-grenade`](./skills/no-slop-grenade/) | Sizes and shapes anything written for other people, such as messages, emails, requests, announcements, docs, slides, forms, PR descriptions and status updates, so it isn't a [slop grenade](https://noslopgrenade.com/). Calibrated on real rewrites and the sender's edits to them: cut to what the reader needs, keep every fact, condition and real uncertainty, and add nothing the sender didn't say. |
 
 Omi is the first skill in this collection. Additional skills will be added as they are developed and reviewed.
