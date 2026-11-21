@@ -1,0 +1,49 @@
+# Review every pull request opened from a branch of this repository.
+#
+# `msreview enable OWNER/REPO` writes this file and sets what it needs; to set it up
+# by hand, copy it to .github/workflows/morning-star-code-review.yml and set:
+#   secrets.MSREVIEW_MISTRAL_API_KEY   Mistral key of a workspace with Workflows access
+#   vars.MSREVIEW_APP_CLIENT_ID        your GitHub App's client id
+#   secrets.MSREVIEW_APP_PRIVATE_KEY   your GitHub App's private key (PEM)
+# The MSREVIEW_ prefix keeps these apart from secrets your other workflows use.
+# Without the App credentials the review is attached to the run as a report.
+#
+# Pull requests from forks get no secrets on `pull_request`, so they are skipped here.
+# Review them with morning-star-code-review-forks.yml from the examples of
+# ThomsenDrake/morning-star-code-reviews (maintainer approval per push), or on demand
+# with `msreview review <PR URL>`.
+name: Morning Star Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    # Model rate limits slow a review down; keep this about 20 above deadline-minutes.
+    timeout-minutes: 110
+    steps:
+      # Pin to the full commit SHA of the release you reviewed.
+      - uses: ThomsenDrake/morning-star-code-reviews@a1f47049167ddf631d3a27bd8f803f878187b08e # v0.2.0
+        with:
+          mistral-api-key: ${{ secrets.MSREVIEW_MISTRAL_API_KEY }}
+          client-id: ${{ vars.MSREVIEW_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.MSREVIEW_APP_PRIVATE_KEY }}
+          # preset: best              # best | balanced | single | fast | mistral
+          # explorers: zai-glm-5-3,mistral-large-4
+          # verify: "true"
+          # max-cost-usd: "10.00"
+          # fail-on: never            # never | findings | high | critical
+          # deadline-minutes: "90"   # keep about 20 below timeout-minutes
