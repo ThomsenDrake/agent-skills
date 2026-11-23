@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 110
     steps:
       # Pin to the full commit SHA of the release you reviewed.
-      - uses: ThomsenDrake/morning-star-code-reviews@a1f47049167ddf631d3a27bd8f803f878187b08e # v0.2.0
+      - uses: ThomsenDrake/morning-star-code-reviews@4fae32c2074a2fafcac55f2f37c620a0c6814cd6 # v0.2.0
         with:
           mistral-api-key: ${{ secrets.MSREVIEW_MISTRAL_API_KEY }}
           client-id: ${{ vars.MSREVIEW_APP_CLIENT_ID }}
