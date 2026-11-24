@@ -12,31 +12,46 @@
 # Review them with morning-star-code-review-forks.yml from the examples of
 # ThomsenDrake/morning-star-code-reviews (maintainer approval per push), or on demand
 # with `msreview review <PR URL>`.
+#
+# A `/msreview dismiss <id> <reason>` comment from someone with write access dismisses
+# findings; the run it starts updates the summary and the label without any model.
+# Every other comment starts a run whose job is skipped.
 name: Morning Star Code Review
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created, edited]
 
 permissions:
   contents: read
   pull-requests: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   review:
     if: >-
+      (github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      github.actor != 'dependabot[bot]') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      contains(github.event.comment.body, '/msreview dismiss') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+      github.event.comment.author_association))
     runs-on: ubuntu-latest
+    # Per job, so runs that skip it do not join the group. A new push cancels the
+    # review in progress; a command waits for it.
+    concurrency:
+      group: >-
+        ${{ github.workflow }}-${{ github.event.pull_request.number ||
+        github.event.issue.number }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # Model rate limits slow a review down; keep this about 20 above deadline-minutes.
     timeout-minutes: 110
     steps:
       # Pin to the full commit SHA of the release you reviewed.
-      - uses: ThomsenDrake/morning-star-code-reviews@4fae32c2074a2fafcac55f2f37c620a0c6814cd6 # v0.2.0
+      - uses: ThomsenDrake/morning-star-code-reviews@5b930ac8fc9981c5ddff9e4354a762d434f6fe26 # v0.3.0
         with:
           mistral-api-key: ${{ secrets.MSREVIEW_MISTRAL_API_KEY }}
           client-id: ${{ vars.MSREVIEW_APP_CLIENT_ID }}
